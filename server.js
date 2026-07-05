@@ -363,6 +363,7 @@ function returnStatusResponse(res) {
       psidts: mask(process.env.GEMINI_PSIDTS)
     }
   }));
+}
 
 server.listen(PORT, () => {
   console.log(`[BACKEND] Server đang chạy tại http://localhost:${PORT}`);
