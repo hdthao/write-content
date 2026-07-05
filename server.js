@@ -176,8 +176,36 @@ function loadEnv() {
   }
 }
 
+const COOKIES_CACHE_PATH = '/tmp/gemini_cookies.json';
+
+function saveCookiesToFile(psid, psidts) {
+  try {
+    fs.writeFileSync(COOKIES_CACHE_PATH, JSON.stringify({ psid, psidts }), 'utf-8');
+    console.log('[BACKEND] Đã lưu cookies vào file cache.');
+  } catch (e) {
+    console.warn('[BACKEND] Không thể lưu cookies vào file:', e.message);
+  }
+}
+
+function loadCookiesFromFile() {
+  try {
+    if (fs.existsSync(COOKIES_CACHE_PATH)) {
+      const data = JSON.parse(fs.readFileSync(COOKIES_CACHE_PATH, 'utf-8'));
+      if (data.psid && data.psidts) {
+        console.log('[BACKEND] Đọc cookies từ file cache để ưu tiên hơn biến môi trường...');
+        process.env.GEMINI_PSID = data.psid;
+        process.env.GEMINI_PSIDTS = data.psidts;
+      }
+    }
+  } catch (e) {
+    console.warn('[BACKEND] Không đọc được file cookie cache:', e.message);
+  }
+}
+
 // Load env variables
 loadEnv();
+// Override with cached cookies from previous UI update (if any)
+loadCookiesFromFile();
 
 // Start the MCP process
 startMcpServer();
@@ -223,6 +251,7 @@ const server = http.createServer((req, res) => {
             console.log('[BACKEND] Cập nhật cookie mới từ yêu cầu POST status...');
             process.env.GEMINI_PSID = cleanPsid;
             process.env.GEMINI_PSIDTS = cleanPsidts;
+            saveCookiesToFile(cleanPsid, cleanPsidts);
 
             isInitialized = false;
             mcpServerAvailable = true;
@@ -285,6 +314,7 @@ const server = http.createServer((req, res) => {
             console.log('[BACKEND] Phát hiện cookie mới gửi từ frontend. Đang khởi động lại MCP server...');
             process.env.GEMINI_PSID = cleanPsid;
             process.env.GEMINI_PSIDTS = cleanPsidts;
+            saveCookiesToFile(cleanPsid, cleanPsidts);
 
             isInitialized = false;
             mcpServerAvailable = true;
