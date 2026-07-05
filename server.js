@@ -193,21 +193,60 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === 'GET' && req.url === '/api/status') {
-    const mask = (str) => {
-      if (!str) return 'Chưa cấu hình';
-      if (str.length <= 16) return '***';
-      return str.slice(0, 10) + '...' + str.slice(-6);
-    };
+    returnStatusResponse(res);
+    return;
+  }
 
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      initialized: isInitialized,
-      mcpServerAvailable: mcpServerAvailable,
-      cookies: {
-        psid: mask(process.env.GEMINI_PSID),
-        psidts: mask(process.env.GEMINI_PSIDTS)
+  if (req.method === 'POST' && req.url === '/api/status') {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+
+    req.on('end', () => {
+      try {
+        const { cookies } = JSON.parse(body);
+        if (cookies && cookies.psid && cookies.psidts) {
+          const cleanPsid = cookies.psid.trim();
+          const cleanPsidts = cookies.psidts.trim();
+
+          if (cleanPsid !== process.env.GEMINI_PSID || cleanPsidts !== process.env.GEMINI_PSIDTS) {
+            console.log('[BACKEND] Cập nhật cookie mới từ yêu cầu POST status...');
+            process.env.GEMINI_PSID = cleanPsid;
+            process.env.GEMINI_PSIDTS = cleanPsidts;
+
+            isInitialized = false;
+            mcpServerAvailable = true;
+
+            if (child) {
+              child.kill();
+            }
+
+            startMcpServer();
+
+            // Wait for initialization
+            let attempts = 0;
+            const checkInterval = setInterval(() => {
+              attempts++;
+              if (isInitialized) {
+                clearInterval(checkInterval);
+                returnStatusResponse(res);
+              } else if (attempts >= 30 || !mcpServerAvailable) {
+                clearInterval(checkInterval);
+                res.writeHead(503, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Không thể kết nối với Cookie mới.' }));
+              }
+            }, 500);
+            return;
+          }
+        }
+
+        returnStatusResponse(res);
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'JSON không hợp lệ.' }));
       }
-    }));
+    });
     return;
   }
 
@@ -307,6 +346,23 @@ function sendToolCall(prompt, res) {
   pendingRequests.set(requestId, res);
   writeToMcp(toolCall);
 }
+
+function returnStatusResponse(res) {
+  const mask = (str) => {
+    if (!str) return 'Chưa cấu hình';
+    if (str.length <= 16) return '***';
+    return str.slice(0, 10) + '...' + str.slice(-6);
+  };
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    initialized: isInitialized,
+    mcpServerAvailable: mcpServerAvailable,
+    cookies: {
+      psid: mask(process.env.GEMINI_PSID),
+      psidts: mask(process.env.GEMINI_PSIDTS)
+    }
+  }));
 
 server.listen(PORT, () => {
   console.log(`[BACKEND] Server đang chạy tại http://localhost:${PORT}`);

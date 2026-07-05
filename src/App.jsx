@@ -86,22 +86,50 @@ export default function App() {
     checkBackendStatus()
   }, [])
 
+  async function applyCookiesToServer() {
+    setCheckingStatus(true)
+    setErrorMsg('')
+    try {
+      const res = await fetch('https://write-content.onrender.com/api/status', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          cookies: {
+            psid: geminiPsid,
+            psidts: geminiPsidts
+          }
+        })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setServerStatus(data)
+        showTemporarySuccess('Đã áp dụng và kết nối thành công với Cookie mới!')
+      } else {
+        let detail = ''
+        try {
+          const errJson = await res.json()
+          detail = errJson?.error || JSON.stringify(errJson)
+        } catch {
+          detail = await res.text()
+        }
+        throw new Error(detail || `Lỗi HTTP ${res.status}`)
+      }
+    } catch (err) {
+      console.error(err)
+      setErrorMsg(`Lỗi khi lưu Cookie lên Server: ${err.message}`)
+    } finally {
+      setCheckingStatus(false)
+    }
+  }
+
   useEffect(() => {
     localStorage.setItem('gemini_psid', geminiPsid)
-    // Refresh status if cookies are updated to check connection
-    const timer = setTimeout(() => {
-      checkBackendStatus()
-    }, 2000)
-    return () => clearTimeout(timer)
   }, [geminiPsid])
 
   useEffect(() => {
     localStorage.setItem('gemini_psidts', geminiPsidts)
-    // Refresh status if cookies are updated to check connection
-    const timer = setTimeout(() => {
-      checkBackendStatus()
-    }, 2000)
-    return () => clearTimeout(timer)
   }, [geminiPsidts])
 
   const outputRef = useRef(null)
@@ -404,19 +432,31 @@ export default function App() {
                     style={{ padding: '0.5rem', fontSize: '0.85rem' }}
                   />
                 </label>
-                {(geminiPsid || geminiPsidts) && (
+                <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
                   <button 
                     type="button" 
-                    className="clear-all-btn"
-                    style={{ width: 'fit-content', padding: '0.3rem 0.8rem', fontSize: '0.75rem', marginTop: '0.2rem' }}
-                    onClick={() => {
-                      setGeminiPsid('');
-                      setGeminiPsidts('');
-                    }}
+                    className="generate-btn"
+                    style={{ margin: 0, padding: '0.6rem 1.2rem', fontSize: '0.85rem', flex: 1 }}
+                    onClick={applyCookiesToServer}
+                    disabled={checkingStatus || !geminiPsid.trim() || !geminiPsidts.trim()}
                   >
-                    Xóa cấu hình cookies đã lưu
+                    {checkingStatus ? '💾 Đang kết nối...' : '💾 Áp dụng & Lưu lên Server'}
                   </button>
-                )}
+                  
+                  {(geminiPsid || geminiPsidts) && (
+                    <button 
+                      type="button" 
+                      className="clear-all-btn"
+                      style={{ width: 'fit-content', padding: '0.6rem 1.2rem', fontSize: '0.85rem', margin: 0 }}
+                      onClick={() => {
+                        setGeminiPsid('');
+                        setGeminiPsidts('');
+                      }}
+                    >
+                      Xóa cấu hình
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </div>
