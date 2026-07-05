@@ -3,7 +3,7 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 let child = null;
 let isInitialized = false;
 let mcpServerAvailable = true;
@@ -18,9 +18,10 @@ function startMcpServer() {
   const env = { ...process.env };
   const userHome = process.env.USERPROFILE || process.env.HOME || '';
   if (userHome) {
-    const uvBin = userHome + '\\.local\\bin';
+    const uvBin = path.join(userHome, '.local', 'bin');
+    const pathSeparator = process.platform === 'win32' ? ';' : ':';
     if (process.env.PATH) {
-      env.PATH = `${uvBin};${process.env.PATH}`;
+      env.PATH = `${uvBin}${pathSeparator}${process.env.PATH}`;
     } else {
       env.PATH = uvBin;
     }
