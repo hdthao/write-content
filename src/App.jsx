@@ -63,37 +63,10 @@ export default function App() {
   async function checkBackendStatus() {
     setCheckingStatus(true)
     try {
-      const res = await fetch('https://write-content.onrender.com/api/status')
-      if (res.ok) {
-        const data = await res.json()
-        setServerStatus(data)
-      } else {
-        throw new Error(`Lỗi HTTP ${res.status}`)
-      }
-    } catch (err) {
-      console.error(err)
-      setServerStatus({
-        initialized: false,
-        mcpServerAvailable: false,
-        error: err.message || 'Không kết nối được server'
-      })
-    } finally {
-      setCheckingStatus(false)
-    }
-  }
-
-  useEffect(() => {
-    checkBackendStatus()
-  }, [])
-
-  async function applyCookiesToServer() {
-    setCheckingStatus(true)
-    setErrorMsg('')
-    try {
       const res = await fetch('https://write-content.onrender.com/api/status', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           cookies: {
@@ -105,7 +78,7 @@ export default function App() {
       if (res.ok) {
         const data = await res.json()
         setServerStatus(data)
-        showTemporarySuccess('Đã áp dụng và kết nối thành công với Cookie mới!')
+        return data.initialized
       } else {
         let detail = ''
         try {
@@ -118,9 +91,28 @@ export default function App() {
       }
     } catch (err) {
       console.error(err)
-      setErrorMsg(`Lỗi khi lưu Cookie lên Server: ${err.message}`)
+      setServerStatus({
+        initialized: false,
+        mcpServerAvailable: false,
+        error: err.message || 'Không kết nối được server'
+      })
+      return false
     } finally {
       setCheckingStatus(false)
+    }
+  }
+
+  useEffect(() => {
+    checkBackendStatus()
+  }, [])
+
+  async function applyCookiesToServer() {
+    setErrorMsg('')
+    const ok = await checkBackendStatus()
+    if (ok) {
+      showTemporarySuccess('Đã áp dụng và kết nối thành công với Cookie mới!')
+    } else {
+      setErrorMsg('Áp dụng Cookie thất bại. Vui lòng kiểm tra lại giá trị.')
     }
   }
 
