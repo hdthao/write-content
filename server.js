@@ -438,7 +438,22 @@ function testMcpConnection() {
           if (data.error) {
             resolve({ success: false, error: data.error });
           } else {
-            resolve({ success: true });
+            const outputText = data.output || '';
+            // Kiểm tra xem nội dung trả về có chứa dấu hiệu lỗi hoặc yêu cầu đăng nhập không
+            const lower = outputText.toLowerCase();
+            if (lower.includes('error') || 
+                lower.includes('cookie') || 
+                lower.includes('expired') || 
+                lower.includes('login') || 
+                lower.includes('sign in') || 
+                lower.includes('unauthorized') ||
+                lower.includes('unauthenticated') ||
+                lower.includes('không thể') ||
+                outputText.trim().length === 0) {
+              resolve({ success: false, error: outputText || 'Cookie không hoạt động hoặc không được xác thực.' });
+            } else {
+              resolve({ success: true, output: outputText });
+            }
           }
         } catch (e) {
           resolve({ success: false, error: 'Lỗi parse dữ liệu kiểm tra từ MCP.' });
@@ -458,7 +473,7 @@ async function returnStatusResponse(res) {
     return str.slice(0, 10) + '...' + str.slice(-6);
   };
 
-  let testResult = { success: false, error: 'Chưa được khởi chạy' };
+  let testResult = { success: false, error: 'Chưa được khởi chạy', output: '' };
   if (isInitialized) {
     console.log('[BACKEND] Đang tiến hành gọi thử Gemini để kiểm nghiệm Cookies...');
     testResult = await testMcpConnection();
@@ -474,7 +489,8 @@ async function returnStatusResponse(res) {
       psid: mask(process.env.GEMINI_PSID),
       psidts: mask(process.env.GEMINI_PSIDTS)
     },
-    error: testResult.success ? null : testResult.error
+    error: testResult.success ? null : testResult.error,
+    pingOutput: testResult.output || null
   }));
 }
 
