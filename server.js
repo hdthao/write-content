@@ -192,6 +192,25 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && req.url === '/api/status') {
+    const mask = (str) => {
+      if (!str) return 'Chưa cấu hình';
+      if (str.length <= 16) return '***';
+      return str.slice(0, 10) + '...' + str.slice(-6);
+    };
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      initialized: isInitialized,
+      mcpServerAvailable: mcpServerAvailable,
+      cookies: {
+        psid: mask(process.env.GEMINI_PSID),
+        psidts: mask(process.env.GEMINI_PSIDTS)
+      }
+    }));
+    return;
+  }
+
   if (req.method === 'POST' && req.url === '/api/generate') {
     let body = '';
     req.on('data', chunk => {

@@ -57,12 +57,51 @@ export default function App() {
   const [geminiPsidts, setGeminiPsidts] = useState(localStorage.getItem('gemini_psidts') || '')
   const [showSettings, setShowSettings] = useState(false)
 
+  const [serverStatus, setServerStatus] = useState(null)
+  const [checkingStatus, setCheckingStatus] = useState(false)
+
+  async function checkBackendStatus() {
+    setCheckingStatus(true)
+    try {
+      const res = await fetch('https://write-content.onrender.com/api/status')
+      if (res.ok) {
+        const data = await res.json()
+        setServerStatus(data)
+      } else {
+        throw new Error(`Lỗi HTTP ${res.status}`)
+      }
+    } catch (err) {
+      console.error(err)
+      setServerStatus({
+        initialized: false,
+        mcpServerAvailable: false,
+        error: err.message || 'Không kết nối được server'
+      })
+    } finally {
+      setCheckingStatus(false)
+    }
+  }
+
+  useEffect(() => {
+    checkBackendStatus()
+  }, [])
+
   useEffect(() => {
     localStorage.setItem('gemini_psid', geminiPsid)
+    // Refresh status if cookies are updated to check connection
+    const timer = setTimeout(() => {
+      checkBackendStatus()
+    }, 2000)
+    return () => clearTimeout(timer)
   }, [geminiPsid])
 
   useEffect(() => {
     localStorage.setItem('gemini_psidts', geminiPsidts)
+    // Refresh status if cookies are updated to check connection
+    const timer = setTimeout(() => {
+      checkBackendStatus()
+    }, 2000)
+    return () => clearTimeout(timer)
   }, [geminiPsidts])
 
   const outputRef = useRef(null)
@@ -283,6 +322,52 @@ export default function App() {
               <span className="token-limit-label" style={{ minWidth: '24px' }}>❸</span>
               <span className="token-limit-val">Khởi chạy backend: <code>node server.js</code> ở thư mục dự án.</span>
             </div>
+          </div>
+
+          <div style={{ marginBottom: '1.5rem', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '1rem', background: '#fff' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+              <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 'bold' }}>📡 Trạng thái kết nối Gemini</h3>
+              <button 
+                type="button" 
+                onClick={checkBackendStatus} 
+                disabled={checkingStatus}
+                style={{ margin: 0, padding: '0.3rem 0.8rem', fontSize: '0.75rem', borderRadius: '4px', cursor: 'pointer' }}
+              >
+                {checkingStatus ? '🔄 Đang kiểm tra...' : '🔄 Kiểm tra lại'}
+              </button>
+            </div>
+            {serverStatus ? (
+              <div style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <span>Trạng thái kết nối:</span>
+                  <span style={{ 
+                    fontWeight: 'bold', 
+                    color: serverStatus.initialized ? 'green' : 'red',
+                    backgroundColor: serverStatus.initialized ? '#e6ffe6' : '#ffe6e6',
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    fontSize: '0.8rem'
+                  }}>
+                    {serverStatus.initialized ? '● Đang kết nối (Cookie hoạt động tốt)' : '○ Chưa kết nối (Cookie hết hạn / Lỗi)'}
+                  </span>
+                </div>
+                {serverStatus.cookies && (
+                  <div style={{ color: '#666', fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.2rem', marginTop: '0.2rem' }}>
+                    <div>PSID đang dùng: <code>{serverStatus.cookies.psid}</code></div>
+                    <div>PSIDTS đang dùng: <code>{serverStatus.cookies.psidts}</code></div>
+                  </div>
+                )}
+                {serverStatus.error && (
+                  <div style={{ color: 'red', fontSize: '0.8rem', marginTop: '0.2rem' }}>
+                    Lỗi: {serverStatus.error}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ fontSize: '0.85rem', color: '#888' }}>
+                ⏳ Đang kiểm tra trạng thái máy chủ...
+              </div>
+            )}
           </div>
 
           <div style={{ marginBottom: '1.5rem', border: '1px dashed #ccc', borderRadius: '8px', padding: '1rem', background: '#fafafa' }}>
