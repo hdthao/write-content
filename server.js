@@ -236,6 +236,17 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && req.url === '/api/debug-code') {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    try {
+      const code = fs.readFileSync('server.js', 'utf8');
+      res.end(code);
+    } catch (e) {
+      res.end('Lỗi đọc file: ' + e.message);
+    }
+    return;
+  }
+
   if (req.method === 'POST' && req.url === '/api/status') {
     let body = '';
     req.on('data', chunk => {
