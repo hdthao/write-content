@@ -13,6 +13,177 @@ let msgId = 1;
 let initializeId = null;
 const pendingRequests = new Map();
 
+function removeDebugAndCodeLines(text) {
+  const lines = text
+    .replace(/^\uFEFF/, '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line.trim()
+      .replace(/^\s*(story_template|story_content|story|content)\s*=\s*(?:[rubf]+)?("""|'''|`{3})/i, '')
+      .replace(/("""|'''|`{3})\s*$/, '')
+      .trim()
+    )
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return true;
+      return !(
+        /^```/.test(trimmed) ||
+        /^SCRIPT\s+TO\s+VERIFY\s+LENGTH\s+AND\s+FORMAT$/i.test(trimmed) ||
+        /^SCRIPT\b.*\bVERIFY\b.*\bFORMAT\b/i.test(trimmed) ||
+        /code_reference|code_event_index/i.test(trimmed) ||
+        /^python\?/i.test(trimmed) ||
+        /^#/.test(trimmed) ||
+        /^(The user wants|Length|Formatting|Line\s*\d+|Dialogue starts|NO emojis)\s*:/i.test(trimmed) ||
+        /^(story_template|story_content|story|content)\s*=\s*(?:[rubf]+)?("""|'''|`{3})\s*$/i.test(trimmed) ||
+        /^(words|title_lines|story_content)\s*=/.test(trimmed) ||
+        /^for\s+\w+\s+in\s+\w+\s*:\s*$/.test(trimmed) ||
+        /^print\s*\(/.test(trimmed) ||
+        /^Word count\b/i.test(trimmed) ||
+        /^Title word count\b/i.test(trimmed) ||
+        /^Line:\s*['"`]/i.test(trimmed) ||
+        /^("""|'''|`{3})$/.test(trimmed)
+      );
+    });
+
+  const firstContentIndex = lines.findIndex(Boolean);
+  if (
+    firstContentIndex !== -1 &&
+    /^(PARTE|PART)\s*1$/i.test(lines[firstContentIndex]) &&
+    lines.slice(firstContentIndex + 1).some(Boolean)
+  ) {
+    lines.splice(firstContentIndex, 1);
+  }
+
+  return lines
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function normalizeGeneratedStoryOutput(text) {
+  const removeEmoji = (value) =>
+    value.replace(/[\u{1F1E6}-\u{1F1FF}\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, '');
+
+  const unwrapCodeStringLine = (line) =>
+    line
+      .trim()
+      .replace(/^\s*(?:const|let|var)?\s*(title|titulo|título|story_title|story_template|story_content|story|content|output)\s*=\s*(?:[rubf]+)?("""|'''|`{3}|["'`])/i, '')
+      .replace(/("""|'''|`{3}|["'`])\s*[;,]?\s*$/, '')
+      .trim();
+
+  const cleanLine = (line) =>
+    unwrapCodeStringLine(line)
+      .replace(/^[#>*\s]+/, '')
+      .replace(/^\d+\.\s+/, '')
+      .replace(/^(title|titulo|título|story title)\s*=\s*/i, '')
+      .replace(/^(title|titulo|título|story title)\s*:\s*/i, '')
+      .replace(/^["'`]+/, '')
+      .replace(/["'`,]+$/, '')
+      .trim();
+
+  const isParteLine = (line) => /^(PARTE|PART|SECCION|SECCIÓN|SECTION|CAPITULO|CAPÍTULO|CHAPTER)\s*[-:]?\s*1\b/i.test(line.trim());
+
+  const isJunkLine = (line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return false;
+    return (
+      /^```/.test(trimmed) ||
+      /code_reference|code_event_index/i.test(trimmed) ||
+      /^#/.test(trimmed) ||
+      /^\/\//.test(trimmed) ||
+      /^\/\*/.test(trimmed) ||
+      /^\*\//.test(trimmed) ||
+      /^python\??$/i.test(trimmed) ||
+      /^SCRIPT\b/i.test(trimmed) ||
+      /^(here is|here's|sure|claro|por supuesto|aquí tienes|aqui tienes|final story|historia final|cuento final|respuesta)\b/i.test(trimmed) ||
+      /^[-*]\s*(line\s*\d+|length|formatting|dialogue starts|no emojis|cta)\s*:/i.test(trimmed) ||
+      /^(analysis|reasoning|notes?|instructions?|formatting|length|word count|word count of title|title word count|line\s*\d+|dialogue starts|no emojis|cta)\s*:/i.test(trimmed) ||
+      /^(the user wants|the task|based on|requirements?|format|hook sentence)\b/i.test(trimmed) ||
+      /^perfect\b.*\bwords?\b/i.test(trimmed) ||
+      /^(words|title_lines|paragraphs?|story_content|story_template|story|content|output)\s*=/.test(trimmed) ||
+      /^(for|if|while|const|let|var|function|return|print|console\.log)\b/.test(trimmed) ||
+      /^[{}\[\]();,]+$/.test(trimmed) ||
+      /^(mam[aá]|est[aá]s|ustedes)\b.*\(.+\)$/i.test(trimmed) ||
+      /^("""|'''|`{3})$/.test(trimmed)
+    );
+  };
+
+  const wordCount = (line) => line.split(/\s+/).filter(Boolean).length;
+  const isLikelyTitle = (line) => {
+    const cleaned = removeEmoji(line).trim();
+    const words = wordCount(cleaned);
+    if (words < 5 || words > 20) return false;
+    if (isParteLine(cleaned) || isJunkLine(cleaned)) return false;
+    if (/[.!?¿¡]$/.test(cleaned)) return false;
+    const letters = cleaned.replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/g, '');
+    if (!letters) return false;
+    const upperLetters = letters.replace(/[a-záéíóúüñ]/g, '').length;
+    return upperLetters / letters.length > 0.65;
+  };
+
+  const isTitleContinuation = (line) => {
+    const cleaned = removeEmoji(line).trim();
+    if (!cleaned || isParteLine(cleaned) || isJunkLine(cleaned)) return false;
+    if (/[.!?¿¡]$/.test(cleaned)) return false;
+    const letters = cleaned.replace(/[^A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/g, '');
+    if (!letters) return false;
+    const upperLetters = letters.replace(/[a-záéíóúüñ]/g, '').length;
+    return upperLetters / letters.length > 0.65;
+  };
+
+  const rawLines = text
+    .replace(/^\uFEFF/, '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .map(cleanLine);
+
+  const lines = rawLines.filter((line) => !isJunkLine(line));
+  const titleIndex = lines.findIndex(isLikelyTitle);
+  const fallbackTitleIndex = titleIndex === -1 ? lines.findIndex((line) => line.trim() && !isParteLine(line)) : titleIndex;
+
+  if (fallbackTitleIndex === -1) {
+    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
+  let titleEndIndex = fallbackTitleIndex;
+  while (titleEndIndex + 1 < lines.length && isTitleContinuation(lines[titleEndIndex + 1])) {
+    titleEndIndex += 1;
+  }
+
+  const title = removeEmoji(lines.slice(fallbackTitleIndex, titleEndIndex + 1).join(' '))
+    .replace(/^[\s#*_\-]+/, '')
+    .replace(/[\s*_\-]+$/, '')
+    .toUpperCase()
+    .trim();
+
+  const bodyLines = [];
+  let previousWasBlank = false;
+  for (let i = titleEndIndex + 1; i < lines.length; i++) {
+    let line = lines[i].trim();
+    if (isJunkLine(line)) continue;
+    if (isParteLine(line)) continue;
+    if (removeEmoji(line).trim().toUpperCase() === title) continue;
+
+    const isCta = /^Comenta\b/i.test(line);
+    if (!isCta) line = removeEmoji(line).trim();
+    if (!line) {
+      if (bodyLines.length && !previousWasBlank) {
+        bodyLines.push('');
+        previousWasBlank = true;
+      }
+      continue;
+    }
+
+    bodyLines.push(line);
+    previousWasBlank = false;
+  }
+
+  return [title, 'PARTE 1', '', ...bodyLines]
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 // Helper to spawn the gemini-webapi-mcp process
 function startMcpServer() {
   console.log('[BACKEND] Đang khởi chạy gemini-webapi-mcp...');
@@ -148,6 +319,7 @@ function handleMcpMessage(msg) {
       if (match) {
         text = match[1].trim();
       }
+      text = normalizeGeneratedStoryOutput(text);
       
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ output: text }));
@@ -403,69 +575,6 @@ function sendToolCall(prompt, res) {
   writeToMcp(toolCall);
 }
 
-function testMcpConnection() {
-  return new Promise((resolve) => {
-    if (!isInitialized) {
-      return resolve({ success: false, error: 'MCP server chưa được khởi tạo xong.' });
-    }
-
-    const requestId = msgId++;
-    const toolCall = {
-      jsonrpc: "2.0",
-      id: requestId,
-      method: "tools/call",
-      params: {
-        name: "gemini_chat",
-        arguments: {
-          prompt: "ping",
-          model: "gemini-3.0-flash"
-        }
-      }
-    };
-
-    // Timeout sau 15 giây
-    const timeout = setTimeout(() => {
-      pendingRequests.delete(requestId);
-      resolve({ success: false, error: 'Yêu cầu kiểm tra kết nối với Gemini bị hết thời gian (Timeout).' });
-    }, 15000);
-
-    const mockRes = {
-      writeHead: (statusCode, headers) => {},
-      end: (dataStr) => {
-        clearTimeout(timeout);
-        try {
-          const data = JSON.parse(dataStr);
-          if (data.error) {
-            resolve({ success: false, error: data.error });
-          } else {
-            const outputText = data.output || '';
-            // Kiểm tra xem nội dung trả về có chứa dấu hiệu lỗi hoặc yêu cầu đăng nhập không
-            const lower = outputText.toLowerCase();
-            if (lower.includes('error') || 
-                lower.includes('cookie') || 
-                lower.includes('expired') || 
-                lower.includes('login') || 
-                lower.includes('sign in') || 
-                lower.includes('unauthorized') ||
-                lower.includes('unauthenticated') ||
-                lower.includes('không thể') ||
-                outputText.trim().length === 0) {
-              resolve({ success: false, error: outputText || 'Cookie không hoạt động hoặc không được xác thực.' });
-            } else {
-              resolve({ success: true, output: outputText });
-            }
-          }
-        } catch (e) {
-          resolve({ success: false, error: 'Lỗi parse dữ liệu kiểm tra từ MCP.' });
-        }
-      }
-    };
-
-    pendingRequests.set(requestId, mockRes);
-    writeToMcp(toolCall);
-  });
-}
-
 async function returnStatusResponse(res) {
   const mask = (str) => {
     if (!str) return 'Chưa cấu hình';
@@ -473,24 +582,19 @@ async function returnStatusResponse(res) {
     return str.slice(0, 10) + '...' + str.slice(-6);
   };
 
-  let testResult = { success: false, error: 'Chưa được khởi chạy', output: '' };
-  if (isInitialized) {
-    console.log('[BACKEND] Đang tiến hành gọi thử Gemini để kiểm nghiệm Cookies...');
-    testResult = await testMcpConnection();
-  } else {
-    testResult.error = 'MCP server chưa sẵn sàng kết nối.';
-  }
+  const hasCookies = Boolean(process.env.GEMINI_PSID && process.env.GEMINI_PSIDTS);
+  const statusOk = isInitialized && mcpServerAvailable && hasCookies;
 
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
-    initialized: isInitialized && testResult.success,
+    initialized: statusOk,
     mcpServerAvailable: mcpServerAvailable,
     cookies: {
       psid: mask(process.env.GEMINI_PSID),
       psidts: mask(process.env.GEMINI_PSIDTS)
     },
-    error: testResult.success ? null : testResult.error,
-    pingOutput: testResult.output || null
+    error: statusOk ? null : 'MCP server chưa sẵn sàng hoặc chưa có cookie.',
+    pingOutput: null
   }));
 }
 
