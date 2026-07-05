@@ -53,6 +53,18 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
 
+  const [geminiPsid, setGeminiPsid] = useState(localStorage.getItem('gemini_psid') || '')
+  const [geminiPsidts, setGeminiPsidts] = useState(localStorage.getItem('gemini_psidts') || '')
+  const [showSettings, setShowSettings] = useState(false)
+
+  useEffect(() => {
+    localStorage.setItem('gemini_psid', geminiPsid)
+  }, [geminiPsid])
+
+  useEffect(() => {
+    localStorage.setItem('gemini_psidts', geminiPsidts)
+  }, [geminiPsidts])
+
   const outputRef = useRef(null)
 
   const selectedFile = files.find((f) => f.id === selectedFileId)
@@ -170,7 +182,11 @@ export default function App() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          prompt: buildPrompt(captionText)
+          prompt: buildPrompt(captionText),
+          cookies: {
+            psid: geminiPsid,
+            psidts: geminiPsidts
+          }
         }),
       })
 
@@ -267,6 +283,57 @@ export default function App() {
               <span className="token-limit-label" style={{ minWidth: '24px' }}>❸</span>
               <span className="token-limit-val">Khởi chạy backend: <code>node server.js</code> ở thư mục dự án.</span>
             </div>
+          </div>
+
+          <div style={{ marginBottom: '1.5rem', border: '1px dashed #ccc', borderRadius: '8px', padding: '1rem', background: '#fafafa' }}>
+            <div 
+              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }}
+              onClick={() => setShowSettings(!showSettings)}
+            >
+              <h3 style={{ margin: 0, fontSize: '0.95rem', color: 'var(--primary)' }}>⚙️ Cấu hình Cookies (Tùy chọn nhập nhanh)</h3>
+              <span style={{ fontSize: '0.8rem', color: '#888' }}>{showSettings ? '▲ Thu gọn' : '▼ Mở rộng'}</span>
+            </div>
+
+            {showSettings && (
+              <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.8rem' }}>
+                <p style={{ margin: 0, fontSize: '0.8rem', color: '#666' }}>
+                  Nhập Cookies của bạn tại đây để gửi trực tiếp cho server mà không cần cấu hình lại biến trên Render. Cookies được lưu an toàn ở trình duyệt của bạn (localStorage).
+                </p>
+                <label className="field" style={{ margin: 0 }}>
+                  <span className="field-label" style={{ fontSize: '0.8rem' }}>Cookie GEMINI_PSID (__Secure-1PSID):</span>
+                  <input 
+                    type="password" 
+                    placeholder="Dán giá trị __Secure-1PSID..."
+                    value={geminiPsid}
+                    onChange={(e) => setGeminiPsid(e.target.value)}
+                    style={{ padding: '0.5rem', fontSize: '0.85rem' }}
+                  />
+                </label>
+                <label className="field" style={{ margin: 0 }}>
+                  <span className="field-label" style={{ fontSize: '0.8rem' }}>Cookie GEMINI_PSIDTS (__Secure-1PSIDTS):</span>
+                  <input 
+                    type="password" 
+                    placeholder="Dán giá trị __Secure-1PSIDTS..."
+                    value={geminiPsidts}
+                    onChange={(e) => setGeminiPsidts(e.target.value)}
+                    style={{ padding: '0.5rem', fontSize: '0.85rem' }}
+                  />
+                </label>
+                {(geminiPsid || geminiPsidts) && (
+                  <button 
+                    type="button" 
+                    className="clear-all-btn"
+                    style={{ width: 'fit-content', padding: '0.3rem 0.8rem', fontSize: '0.75rem', marginTop: '0.2rem' }}
+                    onClick={() => {
+                      setGeminiPsid('');
+                      setGeminiPsidts('');
+                    }}
+                  >
+                    Xóa cấu hình cookies đã lưu
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           <h2 className="card-title">2. Danh sách File SRT</h2>

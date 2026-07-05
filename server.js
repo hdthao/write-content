@@ -200,11 +200,47 @@ const server = http.createServer((req, res) => {
 
     req.on('end', () => {
       try {
-        const { prompt } = JSON.parse(body);
+        const { prompt, cookies } = JSON.parse(body);
         if (!prompt) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Prompt không được bỏ trống.' }));
           return;
+        }
+
+        // Check if frontend provided cookies and if they differ from current environment
+        if (cookies && cookies.psid && cookies.psidts) {
+          const cleanPsid = cookies.psid.trim();
+          const cleanPsidts = cookies.psidts.trim();
+
+          if (cleanPsid !== process.env.GEMINI_PSID || cleanPsidts !== process.env.GEMINI_PSIDTS) {
+            console.log('[BACKEND] Phát hiện cookie mới gửi từ frontend. Đang khởi động lại MCP server...');
+            process.env.GEMINI_PSID = cleanPsid;
+            process.env.GEMINI_PSIDTS = cleanPsidts;
+
+            isInitialized = false;
+            mcpServerAvailable = true;
+
+            if (child) {
+              child.kill();
+            }
+
+            startMcpServer();
+
+            // Wait for initialization (up to 15 seconds)
+            let attempts = 0;
+            const checkInterval = setInterval(() => {
+              attempts++;
+              if (isInitialized) {
+                clearInterval(checkInterval);
+                sendToolCall(prompt, res);
+              } else if (attempts >= 30 || !mcpServerAvailable) {
+                clearInterval(checkInterval);
+                res.writeHead(503, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Không thể khởi tạo kết nối với Cookie mới. Vui lòng kiểm tra lại cookie.' }));
+              }
+            }, 500);
+            return;
+          }
         }
 
         if (!mcpServerAvailable) {
@@ -221,27 +257,11 @@ const server = http.createServer((req, res) => {
           return;
         }
 
-        // Send tool call to gemini-webapi-mcp
-        const requestId = msgId++;
-        const toolCall = {
-          jsonrpc: "2.0",
-          id: requestId,
-          method: "tools/call",
-          params: {
-            name: "gemini_chat",
-            arguments: {
-              prompt: prompt,
-              model: "gemini-3.0-flash"
-            }
-          }
-        };
-
-        pendingRequests.set(requestId, res);
-        writeToMcp(toolCall);
+        sendToolCall(prompt, res);
 
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'JSON không hợp lệ.' }));
+        res.end(JSON.stringify({ error: 'JSON không hợp lệ hoặc lỗi kết nối.' }));
       }
     });
   } else {
@@ -249,6 +269,25 @@ const server = http.createServer((req, res) => {
     res.end();
   }
 });
+
+function sendToolCall(prompt, res) {
+  const requestId = msgId++;
+  const toolCall = {
+    jsonrpc: "2.0",
+    id: requestId,
+    method: "tools/call",
+    params: {
+      name: "gemini_chat",
+      arguments: {
+        prompt: prompt,
+        model: "gemini-3.0-flash"
+      }
+    }
+  };
+
+  pendingRequests.set(requestId, res);
+  writeToMcp(toolCall);
+}
 
 server.listen(PORT, () => {
   console.log(`[BACKEND] Server đang chạy tại http://localhost:${PORT}`);
