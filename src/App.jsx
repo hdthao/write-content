@@ -164,7 +164,7 @@ export default function App() {
 
   async function generateCaptionRewriteForFile(fileId, captionText) {
     try {
-      const response = await fetch('http://localhost:3000/api/generate', {
+      const response = await fetch('https://write-content.onrender.com/api/generate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
