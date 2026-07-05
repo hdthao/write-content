@@ -186,6 +186,12 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && req.url === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end(`Content Writer AI Backend is running!\nMCP Server Available: ${mcpServerAvailable}\nInitialized: ${isInitialized}`);
+    return;
+  }
+
   if (req.method === 'POST' && req.url === '/api/generate') {
     let body = '';
     req.on('data', chunk => {
