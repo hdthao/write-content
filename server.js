@@ -6,6 +6,7 @@ import path from 'path';
 const PORT = process.env.PORT || 3000;
 let child = null;
 let isInitialized = false;
+let isRestarting = false;
 let mcpServerAvailable = true;
 let spawnErrorMsg = '';
 let msgId = 1;
@@ -71,6 +72,14 @@ function startMcpServer() {
   child.on('close', (code) => {
     console.log(`[BACKEND] gemini-webapi-mcp đã đóng với mã code: ${code}`);
     isInitialized = false;
+
+    if (isRestarting) {
+      console.log('[BACKEND] Đang tiến hành khởi động lại MCP server với cookie mới...');
+      isRestarting = false;
+      startMcpServer();
+      return;
+    }
+
     // Attempt to restart after 5 seconds if it closed unexpectedly
     if (mcpServerAvailable) {
       setTimeout(startMcpServer, 5000);
@@ -218,11 +227,13 @@ const server = http.createServer((req, res) => {
             isInitialized = false;
             mcpServerAvailable = true;
 
+            isRestarting = true;
             if (child) {
               child.kill();
+            } else {
+              isRestarting = false;
+              startMcpServer();
             }
-
-            startMcpServer();
 
             // Wait for initialization
             let attempts = 0;
@@ -278,11 +289,13 @@ const server = http.createServer((req, res) => {
             isInitialized = false;
             mcpServerAvailable = true;
 
+            isRestarting = true;
             if (child) {
               child.kill();
+            } else {
+              isRestarting = false;
+              startMcpServer();
             }
-
-            startMcpServer();
 
             // Wait for initialization (up to 15 seconds)
             let attempts = 0;
