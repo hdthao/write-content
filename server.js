@@ -10,6 +10,7 @@ let isRestarting = false;
 let mcpServerAvailable = true;
 let spawnErrorMsg = '';
 let msgId = 1;
+let initializeId = null;
 const pendingRequests = new Map();
 
 // Helper to spawn the gemini-webapi-mcp process
@@ -91,6 +92,7 @@ function startMcpServer() {
 }
 
 function sendInitialize() {
+  initializeId = msgId;
   const initMsg = {
     jsonrpc: "2.0",
     id: msgId++,
@@ -114,7 +116,7 @@ function writeToMcp(msg) {
 
 function handleMcpMessage(msg) {
   // 1. Handle initialize response
-  if (msg.id === 1 && msg.result) {
+  if (msg.id === initializeId && msg.result) {
     console.log('[BACKEND] Đã nhận phản hồi initialize từ gemini-webapi-mcp. Đang gửi thông báo initialized...');
     const initializedNotification = {
       jsonrpc: "2.0",
