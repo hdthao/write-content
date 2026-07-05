@@ -392,21 +392,78 @@ function sendToolCall(prompt, res) {
   writeToMcp(toolCall);
 }
 
-function returnStatusResponse(res) {
+function testMcpConnection() {
+  return new Promise((resolve) => {
+    if (!isInitialized) {
+      return resolve({ success: false, error: 'MCP server chưa được khởi tạo xong.' });
+    }
+
+    const requestId = msgId++;
+    const toolCall = {
+      jsonrpc: "2.0",
+      id: requestId,
+      method: "tools/call",
+      params: {
+        name: "gemini_chat",
+        arguments: {
+          prompt: "ping",
+          model: "gemini-3.0-flash"
+        }
+      }
+    };
+
+    // Timeout sau 15 giây
+    const timeout = setTimeout(() => {
+      pendingRequests.delete(requestId);
+      resolve({ success: false, error: 'Yêu cầu kiểm tra kết nối với Gemini bị hết thời gian (Timeout).' });
+    }, 15000);
+
+    const mockRes = {
+      writeHead: (statusCode, headers) => {},
+      end: (dataStr) => {
+        clearTimeout(timeout);
+        try {
+          const data = JSON.parse(dataStr);
+          if (data.error) {
+            resolve({ success: false, error: data.error });
+          } else {
+            resolve({ success: true });
+          }
+        } catch (e) {
+          resolve({ success: false, error: 'Lỗi parse dữ liệu kiểm tra từ MCP.' });
+        }
+      }
+    };
+
+    pendingRequests.set(requestId, mockRes);
+    writeToMcp(toolCall);
+  });
+}
+
+async function returnStatusResponse(res) {
   const mask = (str) => {
     if (!str) return 'Chưa cấu hình';
     if (str.length <= 16) return '***';
     return str.slice(0, 10) + '...' + str.slice(-6);
   };
 
+  let testResult = { success: false, error: 'Chưa được khởi chạy' };
+  if (isInitialized) {
+    console.log('[BACKEND] Đang tiến hành gọi thử Gemini để kiểm nghiệm Cookies...');
+    testResult = await testMcpConnection();
+  } else {
+    testResult.error = 'MCP server chưa sẵn sàng kết nối.';
+  }
+
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({
-    initialized: isInitialized,
+    initialized: isInitialized && testResult.success,
     mcpServerAvailable: mcpServerAvailable,
     cookies: {
       psid: mask(process.env.GEMINI_PSID),
       psidts: mask(process.env.GEMINI_PSIDTS)
-    }
+    },
+    error: testResult.success ? null : testResult.error
   }));
 }
 
