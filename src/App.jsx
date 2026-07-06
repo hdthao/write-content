@@ -1,22 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
-
-function parseSrtCaptions(srtText) {
-  return srtText
-    .replace(/^\uFEFF/, '')
-    .replace(/\r/g, '')
-    .split(/\n{2,}/)
-    .map((block) =>
-      block
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line && !/^\d+$/.test(line) && !line.includes('-->'))
-        .map((line) => line.replace(/<[^>]+>/g, '').trim())
-        .filter(Boolean)
-        .join(' ')
-    )
-    .filter(Boolean)
-    .join('\n')
-}
+import * as XLSX from 'xlsx'
+import { SrtList, SrtEditor } from './components/SrtManager'
+import { TitleList, TitleEditor } from './components/TitleManager'
 
 function buildPrompt(captionText) {
   return `Đây là kịch bản của một video drama ngắn 10 giây. Hãy viết một câu chuyện kịch tính, lôi cuốn người đọc dựa trên kịch bản này bằng tiếng Tây Ban Nha theo các yêu cầu sau:
@@ -52,148 +37,102 @@ ABSOLUTE OUTPUT RULES:
 - The first non-empty line must be the ALL CAPS Spanish title. The second line must be exactly PARTE 1. The third line must be blank.`
 }
 
-function cleanGeneratedStoryOutput(outputText) {
-  const unwrapCodeStringLine = (line) => {
-    return line.trim()
-      .replace(/^\s*(story_template|story_content|story|content)\s*=\s*(?:[rubf]+)?("""|'''|`{3})/i, '')
-      .replace(/("""|'''|`{3})\s*$/, '')
-      .trim()
-  }
+function buildTitlePrompt(titleText) {
+  return `Bạn là một người kể chuyện chuyên nghiệp và tiểu thuyết gia tài ba, có khả năng tạo ra những câu chuyện hấp dẫn, giàu cảm xúc và khó lòng đặt xuống.
 
-  const isDebugOrCodeLine = (line) => {
-    const trimmed = line.trim()
-    if (!trimmed) return false
-    return (
-      /^```/.test(trimmed) ||
-      /^SCRIPT\s+TO\s+VERIFY\s+LENGTH\s+AND\s+FORMAT$/i.test(trimmed) ||
-      /^SCRIPT\b.*\bVERIFY\b.*\bFORMAT\b/i.test(trimmed) ||
-      /code_reference|code_event_index/i.test(trimmed) ||
-      /^python\?/i.test(trimmed) ||
-      /^#/.test(trimmed) ||
-      /^(The user wants|Length|Formatting|Line\s*\d+|Dialogue starts|NO emojis)\s*:/i.test(trimmed) ||
-      /^(story_template|story_content|story|content)\s*=\s*(?:[rubf]+)?("""|'''|`{3})\s*$/i.test(trimmed) ||
-      /^(words|title_lines|story_content)\s*=/.test(trimmed) ||
-      /^for\s+\w+\s+in\s+\w+\s*:\s*$/.test(trimmed) ||
-      /^print\s*\(/.test(trimmed) ||
-      /^Word count\b/i.test(trimmed) ||
-      /^Title word count\b/i.test(trimmed) ||
-      /^Line:\s*['"`]/i.test(trimmed) ||
-      /^("""|'''|`{3})$/.test(trimmed)
-    )
-  }
+Dựa vào tiêu đề sau, hãy DỊCH NGUYÊN NGHĨA tiêu đề đầu vào sang tiếng Tây Ban Nha. Không được viết lại theo ý mới, không thêm chi tiết, không bỏ chi tiết, không đổi nhân vật/sự kiện/cảm xúc chính. Chỉ được điều chỉnh rất nhẹ để câu tiếng Tây Ban Nha tự nhiên và đúng ngữ pháp. KHÔNG viết hoa toàn bộ tiêu đề này, chỉ viết hoa chữ cái đầu hoặc theo đúng ngữ pháp:
+TIÊU ĐỀ GỐC: ${titleText}
 
-  // 1. Initial cleanup of return characters and raw lines
-  let rawLines = outputText
-    .replace(/^\uFEFF/, '')
-    .replace(/\r/g, '')
-    .split('\n')
-    .map(line => unwrapCodeStringLine(line))
-    .filter((line) => {
-      if (!line) return true; // keep blank lines for now
-      if (isDebugOrCodeLine(line)) return false;
-      return true;
-    });
+Hãy viết TOÀN BỘ câu chuyện từ đầu đến cuối, hoàn toàn bằng tiếng Tây Ban Nha theo các yêu cầu sau:
 
-  const firstContentIndex = rawLines.findIndex(Boolean)
-  if (
-    firstContentIndex !== -1 &&
-    /^(PARTE|PART)\s*1$/i.test(rawLines[firstContentIndex]) &&
-    rawLines.slice(firstContentIndex + 1).some(Boolean)
-  ) {
-    rawLines.splice(firstContentIndex, 1)
-  }
+Yêu cầu bắt buộc:
 
-  // Find the first non-empty line (Title)
-  let titleIndex = -1;
-  for (let i = 0; i < rawLines.length; i++) {
-    if (rawLines[i]) {
-      titleIndex = i;
-      break;
-    }
-  }
+- Toàn bộ phần nội dung câu chuyện phải có tối thiểu 3500 từ, không tính tiêu đề. Để tránh bị thiếu độ dài, hãy viết khoảng 3500-4000 từ. Không dùng tiêu chuẩn ký tự; chỉ tính theo số từ. Đây là điều kiện hoàn thành quan trọng nhất: nếu chưa đạt ít nhất 3500 từ thì tuyệt đối chưa được kết thúc câu chuyện.
 
-  if (titleIndex !== -1) {
-    // Clean Title (Line 1): remove markdown headers (#), bold (**), title/título prefixes, and emojis
-    let title = rawLines[titleIndex]
-      .replace(/^[\s#*_\-]+/, '') // remove leading markdown characters like #, *, _, -
-      .replace(/[\s*_\-]+$/, '') // remove trailing markdown characters
-      .replace(/^(Título|Title|TÍTULO|TITLE)\s*:\s*/i, '') // remove "Title:" prefixes
-      .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1F1E6}-\u{1F1FF}]/gu, '') // remove emojis
-      .toUpperCase()
-      .trim();
+- Viết câu chuyện liền mạch, không chia nhỏ thành các phần và BẮT BUỘC TUYỆT ĐỐI không sử dụng từ "PARTE", các đầu mục, hay các dòng phân chia phần nào trong câu chuyện.
 
-    // Find the next non-empty line (should be PARTE 1)
-    let parteIndex = -1;
-    for (let i = titleIndex + 1; i < rawLines.length; i++) {
-      if (rawLines[i]) {
-        parteIndex = i;
-        break;
-      }
-    }
+- Câu chuyện phải cực kỳ lôi cuốn, giàu cảm xúc và hấp dẫn ngay từ câu đầu tiên để người đọc không thể ngừng đọc.
 
-    let restStoryLines = [];
-    if (parteIndex !== -1) {
-      const nextLineClean = rawLines[parteIndex]
-        .replace(/^[\s#*_\-]+/, '')
-        .replace(/[\s*_\-]+$/, '')
-        .trim();
+- Xây dựng sự căng thẳng một cách tự nhiên và mang đến một cái kết bất ngờ, gây sốc và khó đoán mà KHÔNG AI có thể dự đoán được — tạo nên một cái kết bất ngờ và có hậu.
 
-      const isParteLine = /^(PARTE|PART|SECCIÓN|SECTION|CAPÍTULO|CHAPTER)/i.test(nextLineClean) ||
-                          /^\d+$/i.test(nextLineClean); // If it's just "1" or "PARTE 1" etc.
+- Được viết theo phong cách sống động và hấp dẫn như một tiểu thuyết, với những mô tả sinh động, cảm xúc sâu sắc và đối thoại tự nhiên.
 
-      if (isParteLine) {
-        restStoryLines = rawLines.slice(parteIndex + 1);
-      } else {
-        restStoryLines = rawLines.slice(parteIndex);
-      }
-    } else {
-      restStoryLines = rawLines.slice(titleIndex + 1);
-    }
+- Câu văn cần ngắn gọn, rõ ràng, dễ đọc, nhưng chiều dài câu phải linh hoạt (kết hợp tự nhiên cả câu ngắn và câu dài, không áp dụng một khuôn mẫu cố định hay ép buộc câu nào cũng ngắn). Tránh viết những câu quá dài dòng lê thê chứa quá nhiều mệnh đề phụ gây nhiễu, hãy ưu tiên sự mạch lạc và cuốn hút. Chia các đoạn văn một cách tự nhiên dựa theo diễn biến câu chuyện.
 
-    // Clean up remaining story lines: filter out multiple consecutive empty lines
-    let cleanedStory = [];
-    for (let i = 0; i < restStoryLines.length; i++) {
-      const line = restStoryLines[i];
-      if (line === '') {
-        if (cleanedStory.length > 0 && cleanedStory[cleanedStory.length - 1] !== '') {
-          cleanedStory.push('');
-        }
-      } else {
-        cleanedStory.push(line);
-      }
-    }
+- Các đoạn hội thoại PHẢI LUÔN được xuống dòng mới và bắt đầu bằng dấu gạch ngang (—). Mỗi dòng hội thoại nằm trên một đoạn/dòng riêng biệt.
+Ví dụ:
+— Tôi không biết anh sẽ đến, cô ấy nói mà không nhìn anh.
+— Tôi phải làm vậy, anh trả lời.
 
-    // Reconstruct the output with strict formatting:
-    // Line 1: Title
-    // Line 2: PARTE 1
-    // Line 3: (blank line)
-    // Line 4: Story starts...
-    const finalLines = [
-      title,
-      'PARTE 1',
-      '',
-      ...cleanedStory
-    ];
-    return finalLines.join('\n').trim();
-  }
+ABSOLUTE FORMAT RULES:
+- Return only the final Spanish story.
+- The first non-empty line must be a faithful Spanish translation of the original input title. Preserve the exact meaning, characters, events, relationships, stakes, and emotional intent. Do not invent a new title, summarize it differently, dramatize it, soften it, or change its meaning.
+- Write that translated title in natural title/sentence case. Never write the title in ALL CAPS.
+- The story body must contain at least 3500 words, excluding the title. Aim for 3500-4000 words so the final story never falls short. Do not use a character-count target; the length requirement is based only on word count. Never end the story until the body has reached 3500+ words.
+- Do not write "PARTE", "PARTE 1", "Parte 1", chapter names, section headers, numbered headings, or divider lines anywhere.
+- Keep sentences clear and easy to read, but allow their lengths to vary naturally (a mix of short and long sentences, not fixed to a single pattern). Avoid overly long, run-on sentences with too many clauses, focusing on clarity instead.
+- Group sentences into paragraphs naturally based on the flow of the story. Sentences sharing the same idea or related actions should be grouped into a single paragraph (typically 3-5 sentences per paragraph). Avoid putting every single sentence on its own line/paragraph like a short video script, except for dialogue or sentences that need strong emphasis.
+- Every direct dialogue line must start at the beginning of a new line with "—". Never attach direct dialogue after narration in the same line.
+- If narration follows a dialogue line, keep it on the same dialogue line only when it is a short speech tag. Otherwise, move the narration to a new paragraph.
+- Do not add summaries, warnings, markdown, code blocks, word counts, or formatting notes.
 
-  // Fallback to original logic if we couldn't find a title
-  return outputText
-    .replace(/^\uFEFF/, '')
-    .replace(/\r/g, '')
-    .split('\n')
-    .filter((line) => {
-      const trimmed = line.trim()
-      if (!trimmed) return true
-      if (isDebugOrCodeLine(trimmed)) return false
-      return true
-    })
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+Hãy viết toàn bộ câu chuyện ngay bây giờ, không tóm tắt hay cảnh báo, trực tiếp nội dung tường thuật.`
 }
 
-function normalizeGeneratedStoryOutput(outputText) {
+function buildImagePromptPrompt(storyText) {
+  return `Hãy tạo một prompt tiếng Anh để tạo ra 1 hình ảnh mô tả phần hấp dẫn nhất của câu chuyện sau.
+
+Yêu cầu bắt buộc:
+- Prompt tạo ảnh phải viết hoàn toàn bằng tiếng Anh.
+- Write the image prompt in natural lowercase/sentence case. Do not write it in ALL CAPS.
+- Chỉ trả về đúng prompt tạo ảnh, không giải thích, không markdown, không dùng danh sách.
+- Hình ảnh phải mô tả khoảnh khắc hấp dẫn, kịch tính và giàu cảm xúc nhất của câu chuyện.
+- Màu sắc nên tươi sáng, chân thực, sắc nét và thu hút ngay từ cái nhìn đầu tiên.
+- Mô tả rõ bối cảnh xung quanh: địa điểm, thời điểm trong ngày, ánh sáng, không khí, đồ vật quan trọng, hậu cảnh và những chi tiết thị giác giúp người xem hiểu ngay chuyện gì đang xảy ra.
+- Mô tả rõ nhân vật chính: tuổi ước lượng, giới tính nếu câu chuyện cho biết, trang phục, tư thế, vị trí trong khung hình và hành động chính đang diễn ra.
+- Mô tả rõ biểu cảm của nhân vật chính: ánh mắt, cơ mặt, cảm xúc nổi bật, mức độ căng thẳng, sợ hãi, tức giận, đau lòng, chiến thắng hoặc bình tĩnh tùy theo câu chuyện.
+- Mô tả rõ hành động và phản ứng của các nhân vật phụ: họ đang làm gì, nhìn về đâu, cơ thể phản ứng thế nào và cảm xúc thể hiện ra sao.
+- Nhấn mạnh body language: bàn tay, vai, dáng đứng/ngồi, khoảng cách giữa các nhân vật, chuyển động của cơ thể và các vật thể đang rơi/vỡ/được trao/được giấu nếu có.
+- Prompt ảnh phải có bố cục điện ảnh rõ ràng: foreground, middle ground, background, camera angle, lens feel, depth of field, dynamic lighting, sharp focus.
+- Tránh mô tả chung chung. Hãy tạo một cảnh cụ thể như một khung hình phim, giàu chi tiết, có hành động rõ và cảm xúc mạnh.
+- Trong hình ảnh, hãy thể hiện hành động của các nhân vật một cách sống động.
+- Cảm xúc phải được thể hiện rõ ràng trên khuôn mặt và truyền tải qua cử động cơ thể.
+- TẤT CẢ NHÂN VẬT trong hình đều phải là người Tây Ban Nha hoặc Mỹ La Tinh.
+- Viết prompt theo phong cách ảnh cinematic realistic, high detail, sharp focus, vibrant colors.
+
+Câu chuyện:
+"""
+${storyText}
+"""`
+}
+
+function normalizeImagePromptOutput(outputText) {
+  const cleaned = outputText
+    .replace(/^\uFEFF/, '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !/^(PARTE|PART|SECCION|SECCIÓN|SECTION|CAPITULO|CAPÍTULO|CHAPTER)\s*[-:]?\s*1\b/i.test(line))
+    .join(' ')
+    .trim()
+    .replace(/^```(?:[a-zA-Z0-9_?&=]+)?\n([\s\S]*?)\n```$/i, '$1')
+    .replace(/^(image prompt|prompt|final prompt)\s*:\s*/i, '')
+    .replace(/^["'`]+/, '')
+    .replace(/["'`]+$/, '')
+    .trim()
+
+  const letters = cleaned.replace(/[^A-Za-z]/g, '')
+  if (!letters) return cleaned
+
+  const upperLetters = letters.replace(/[a-z]/g, '').length
+  if (upperLetters / letters.length <= 0.75) return cleaned
+
+  const lower = cleaned.toLocaleLowerCase('en')
+  return lower.charAt(0).toLocaleUpperCase('en') + lower.slice(1)
+}
+
+function normalizeGeneratedStoryOutput(outputText, itemType = 'srt') {
+  const isTitleMode = itemType === 'titles'
   const removeEmoji = (text) =>
     text.replace(/[\u{1F1E6}-\u{1F1FF}\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, '')
 
@@ -284,11 +223,98 @@ function normalizeGeneratedStoryOutput(outputText) {
     titleEndIndex += 1
   }
 
-  const title = removeEmoji(lines.slice(fallbackTitleIndex, titleEndIndex + 1).join(' '))
+  const titleRaw = removeEmoji(lines.slice(fallbackTitleIndex, titleEndIndex + 1).join(' '))
     .replace(/^[\s#*_\-]+/, '')
     .replace(/[\s*_\-]+$/, '')
-    .toUpperCase()
     .trim()
+
+  const formatTitle = (value) => {
+    const trimmed = value.replace(/\s+/g, ' ').trim()
+    const letters = trimmed.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ]/g, '')
+    if (!letters) return trimmed
+
+    const upperLetters = letters.replace(/[a-zà-öø-ÿ]/g, '').length
+    if (upperLetters / letters.length <= 0.75) return trimmed
+
+    const lower = trimmed.toLocaleLowerCase('es')
+    return lower.charAt(0).toLocaleUpperCase('es') + lower.slice(1)
+  }
+
+  const title = isTitleMode ? formatTitle(titleRaw) : titleRaw.toUpperCase()
+  const normalizedTitleForCompare = removeEmoji(titleRaw).trim().toUpperCase()
+
+  const ensureSentencePunctuation = (value) => /[.!?…]$/.test(value.trim()) ? value.trim() : `${value.trim()}.`
+
+  const capitalizeSpanishSentence = (value) => {
+    const trimmed = value.trim()
+    const firstLetterIndex = trimmed.search(/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/)
+    if (firstLetterIndex === -1) return trimmed
+    return `${trimmed.slice(0, firstLetterIndex)}${trimmed.charAt(firstLetterIndex).toLocaleUpperCase('es')}${trimmed.slice(firstLetterIndex + 1)}`
+  }
+
+  const splitLongSentence = (sentence) => {
+    const trimmed = sentence.trim()
+    if (!trimmed || trimmed.startsWith('—') || wordCount(trimmed) <= 24) return [trimmed]
+
+    const clauses = trimmed
+      .replace(/[.!?…]+$/, '')
+      .split(/[,;:]\s+|\s+(?:pero|porque|aunque|mientras|cuando|así que|entonces|y entonces)\s+/i)
+      .map((part) => part.trim())
+      .filter(Boolean)
+
+    const chunks = clauses.length > 1 ? clauses : []
+    if (!chunks.length) {
+      const words = trimmed.replace(/[.!?…]+$/, '').split(/\s+/).filter(Boolean)
+      for (let i = 0; i < words.length; i += 16) {
+        chunks.push(words.slice(i, i + 16).join(' '))
+      }
+    }
+
+    const sentences = []
+    let current = ''
+    for (const chunk of chunks) {
+      const candidate = current ? `${current} ${chunk}` : chunk
+      if (current && wordCount(candidate) > 20) {
+        sentences.push(current)
+        current = chunk
+      } else {
+        current = candidate
+      }
+    }
+    if (current) sentences.push(current)
+
+    return sentences.map((part) => capitalizeSpanishSentence(ensureSentencePunctuation(part)))
+  }
+
+  const formatTitleModeParagraph = (paragraph) => {
+    const sentences = paragraph
+      .replace(/\s+/g, ' ')
+      .match(/[^.!?…]+[.!?…]+(?:["”»])?|[^.!?…]+$/g) || [paragraph]
+
+    return sentences.flatMap(splitLongSentence).filter(Boolean)
+  }
+
+  const pushFormattedLine = (line) => {
+    const normalized = line
+      .replace(/\u2014\.\s+/g, '\u2014\n')
+      .replace(/([.!?])\s+(\u2014(?=\S))/g, '$1\n$2')
+      .replace(/([^\n])\s+(\u2014(?=\S))/g, (match, before, dash, offset, value) => {
+        const previous = value.slice(Math.max(0, offset - 80), offset)
+        return /[.!?]\s*$/.test(previous) ? `${before}\n${dash}` : match
+      })
+
+    normalized.split('\n').forEach((part) => {
+      const cleanedPart = part.trim()
+      if (!cleanedPart) return
+      if (cleanedPart.startsWith('—')) {
+        bodyLines.push(cleanedPart)
+        return
+      }
+      formatTitleModeParagraph(cleanedPart).forEach((shortLine) => {
+        bodyLines.push(shortLine)
+      })
+    })
+  }
 
   const bodyLines = []
   let previousWasBlank = false
@@ -296,7 +322,7 @@ function normalizeGeneratedStoryOutput(outputText) {
     let line = lines[i].trim()
     if (isJunkLine(line)) continue
     if (isParteLine(line)) continue
-    if (removeEmoji(line).trim().toUpperCase() === title) continue
+    if (removeEmoji(line).trim().toUpperCase() === normalizedTitleForCompare) continue
 
     const isCta = /^Comenta\b/i.test(line)
     if (!isCta) line = removeEmoji(line).trim()
@@ -308,25 +334,32 @@ function normalizeGeneratedStoryOutput(outputText) {
       continue
     }
 
-    bodyLines.push(line)
+    if (isTitleMode) {
+      pushFormattedLine(line)
+    } else {
+      bodyLines.push(line)
+    }
     previousWasBlank = false
   }
 
-  return [title, 'PARTE 1', '', ...bodyLines]
+  return (isTitleMode ? [title, '', ...bodyLines] : [title, 'PARTE 1', '', ...bodyLines])
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
 
 export default function App() {
-  const [files, setFiles] = useState([]) // Array of: { id, name, captionText, status: 'idle' | 'loading' | 'done' | 'error', output: '', errorMsg: '' }
+  const [activeTab, setActiveTab] = useState('srt') // 'srt' | 'titles'
+  const [files, setFiles] = useState([]) // Array of: { id, name, captionText, status, errorMsg, output: '' }
   const [selectedFileId, setSelectedFileId] = useState(null)
+  const [titles, setTitles] = useState([]) // Array of: { id, name, titleText, status, errorMsg, output: '', imagePrompt: '' }
+  const [selectedTitleId, setSelectedTitleId] = useState(null)
   const [status, setStatus] = useState('idle') // idle | loading | done
   const [errorMsg, setErrorMsg] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
 
-  const [copiedPromptId, setCopiedPromptId] = useState(null)
   const [copiedStoryId, setCopiedStoryId] = useState(null)
+  const [copiedImagePromptId, setCopiedImagePromptId] = useState(null)
   const [copiedAll, setCopiedAll] = useState(false)
   const [toasts, setToasts] = useState([])
 
@@ -337,6 +370,22 @@ export default function App() {
       setToasts((prev) => prev.filter((t) => t.id !== id))
     }, 4000)
   }
+
+  useEffect(() => {
+    window.__addFakeCompletedTitle = (name, text) => {
+      const fakeId = `fake-${Date.now()}`
+      setTitles(prev => [...prev, {
+        id: fakeId,
+        name,
+        titleText: name,
+        status: 'done',
+        output: text,
+        imagePrompt: '',
+        errorMsg: ''
+      }])
+      setSelectedTitleId(fakeId)
+    }
+  }, [])
 
   const [geminiPsid, setGeminiPsid] = useState(localStorage.getItem('gemini_psid') || '')
   const [geminiPsidts, setGeminiPsidts] = useState(localStorage.getItem('gemini_psidts') || '')
@@ -375,13 +424,6 @@ export default function App() {
         throw new Error(detail || `Lỗi HTTP ${res.status}`)
       }
     } catch (err) {
-      if (err.name === 'AbortError') {
-        setFiles((prev) =>
-          prev.map((f) => (f.id === fileId ? { ...f, status: 'idle', errorMsg: 'Da dung.' } : f))
-        )
-        throw err
-      }
-
       console.error(err)
       setServerStatus({
         initialized: false,
@@ -420,86 +462,17 @@ export default function App() {
   const abortControllerRef = useRef(null)
   const stopRequestedRef = useRef(false)
 
-  const selectedFile = files.find((f) => f.id === selectedFileId)
+  const selectedItem = activeTab === 'srt'
+    ? files.find((f) => f.id === selectedFileId)
+    : titles.find((t) => t.id === selectedTitleId)
 
+  // Handlers for SRT and Title loading/editing are handled inside the respective components.
 
-
-  async function handleSrtUpload(e) {
-    const inputFiles = Array.from(e.target.files || [])
-    setErrorMsg('')
-    setSuccessMsg('')
-
-    if (inputFiles.length === 0) return
-
-    const newFiles = []
-    for (const file of inputFiles) {
-      if (!file.name.toLowerCase().endsWith('.srt')) {
-        setErrorMsg(`File "${file.name}" không phải định dạng .srt.`)
-        continue
-      }
-
-      try {
-        const text = await file.text()
-        const parsedCaption = parseSrtCaptions(text)
-
-        if (!parsedCaption.trim()) {
-          setErrorMsg(`Không đọc được nội dung phụ đề trong file: ${file.name}`)
-          continue
-        }
-
-        newFiles.push({
-          id: `${file.name}-${Date.now()}-${Math.random()}`,
-          name: file.name,
-          captionText: parsedCaption,
-          status: 'idle',
-          output: '',
-          errorMsg: '',
-        })
-      } catch (err) {
-        console.error(err)
-        setErrorMsg(`Không đọc được file ${file.name}. Vui lòng thử file khác.`)
-      }
-    }
-
-    if (newFiles.length > 0) {
-      setFiles((prev) => [...prev, ...newFiles])
-      setSelectedFileId((currentId) => currentId || newFiles[0].id)
-      showTemporarySuccess(`Tải thành công ${newFiles.length} file phụ đề!`)
-    }
-
-    // Reset input to allow re-uploading the same files if needed
-    e.target.value = ''
-  }
-
-  function handleCaptionChange(newText) {
-    setFiles((prev) =>
-      prev.map((f) => (f.id === selectedFileId ? { ...f, captionText: newText } : f))
-    )
-  }
-
-  function handleRemoveFile(fileId) {
-    setFiles((prev) => {
-      const filtered = prev.filter((f) => f.id !== fileId)
-      if (selectedFileId === fileId) {
-        setSelectedFileId(filtered[0]?.id || null)
-      }
-      return filtered
-    })
-  }
-
-  function handleClearAll() {
-    setFiles([])
-    setSelectedFileId(null)
-    setErrorMsg('')
-    setSuccessMsg('')
-    setStatus('idle')
-  }
-
-  function handleCopy(text, fileId) {
-    if (!text.trim()) return
+  function handleCopy(text, resultId) {
+    if (!text || !text.trim()) return
     navigator.clipboard.writeText(text.trim())
-    if (fileId) {
-      setCopiedStoryId(fileId)
+    if (resultId) {
+      setCopiedStoryId(resultId)
       setTimeout(() => {
         setCopiedStoryId(null)
       }, 2000)
@@ -507,11 +480,23 @@ export default function App() {
     showTemporarySuccess('Đã sao chép nội dung câu chuyện!')
   }
 
+  function handleCopyImagePrompt(text, resultId) {
+    if (!text || !text.trim()) return
+    navigator.clipboard.writeText(text.trim())
+    setCopiedImagePromptId(resultId)
+    setTimeout(() => {
+      setCopiedImagePromptId(null)
+    }, 2000)
+    showTemporarySuccess('Đã sao chép prompt image!')
+  }
+
   function handleCopyAll() {
-    const allOutputs = files
-      .filter((f) => f.output.trim())
-      .map((f) => `=== ${f.name} ===\n\n${f.output.trim()}`)
+    const list = activeTab === 'srt' ? files : titles
+    const allOutputs = list
+      .filter((item) => item.output && item.output.trim())
+      .map((item) => `=== ${item.name} ===\n\n${item.output.trim()}`)
       .join('\n\n\n')
+
     if (allOutputs) {
       navigator.clipboard.writeText(allOutputs)
       setCopiedAll(true)
@@ -522,24 +507,166 @@ export default function App() {
     }
   }
 
+  const titleCaptionEnding = `❤️ GRACIAS POR LEER ESTA PARTE DE LA HISTORIA 🙏📖
+⚠️ LA CONTINUACIÓN Y EL FINAL YA ESTÁN EN LOS COMENTARIOS 👇
+💬 Si no los ves, toca "VER TODOS LOS COMENTARIOS" y encuéntralos ahí. 👇
+👉 Si quieres saber cómo termina... ¡Deja un "SÍ" en los comentarios! ⬇️✨`
+
+  function getStoryTitle(outputText, fallbackTitle) {
+    return outputText
+      .replace(/\r/g, '')
+      .split('\n')
+      .map((line) => line.trim())
+      .find(Boolean) || fallbackTitle
+  }
+
+  function buildTitleCaption(outputText) {
+    const fullText = outputText.replace(/\r/g, '').trim()
+    if (!fullText) return titleCaptionEnding
+
+    const words = [...fullText.matchAll(/[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*/gu)]
+    if (words.length <= 700) {
+      return `${fullText}\n\n${titleCaptionEnding}`.trim()
+    }
+
+    const minEnd = words[499].index + words[499][0].length
+    const maxEnd = words[699].index + words[699][0].length
+    const searchWindow = fullText.slice(minEnd, maxEnd)
+    const sentenceEndPattern = /[.!?…](?:["”»])?(?=\s|$)/g
+    let cutIndex = -1
+    let match
+
+    while ((match = sentenceEndPattern.exec(searchWindow)) !== null) {
+      cutIndex = minEnd + match.index + match[0].length
+    }
+
+    if (cutIndex === -1) {
+      const paragraphBreakIndex = searchWindow.lastIndexOf('\n\n')
+      if (paragraphBreakIndex !== -1) {
+        cutIndex = minEnd + paragraphBreakIndex
+      }
+    }
+
+    if (cutIndex === -1) {
+      cutIndex = maxEnd
+    }
+
+    const excerpt = fullText.slice(0, cutIndex).trim()
+    return `${excerpt}\n\n${titleCaptionEnding}`.trim()
+  }
+
+  function safeCellText(text, onTruncate) {
+    if (!text) return ''
+    const str = String(text)
+    if (str.length > 32767) {
+      if (onTruncate) onTruncate()
+      return str.slice(0, 32750) + '... [TRUNCATED BY EXCEL LIMIT]'
+    }
+    return str
+  }
+
+  function handleExportXlsx() {
+    const list = activeTab === 'srt' ? files : titles
+    const completedItems = list.filter((item) => item.output && item.output.trim())
+
+    if (completedItems.length === 0) {
+      setErrorMsg('Không có nội dung câu chuyện nào đã hoàn thành để xuất file.')
+      return
+    }
+
+    let truncatedCount = 0
+    const onTruncate = () => {
+      truncatedCount++
+    }
+
+    const data = activeTab === 'titles'
+      ? completedItems.map((item) => ({
+          TITLE: safeCellText(getStoryTitle(item.output, item.name), onTruncate),
+          CAPTION: safeCellText(buildTitleCaption(item.output), onTruncate),
+          'FULL STORY': safeCellText(item.output.trim(), onTruncate),
+          'PROMT IMAGE': safeCellText(item.imagePrompt?.trim() || '', onTruncate),
+        }))
+      : completedItems.map((item) => ({
+          title: safeCellText(item.name, onTruncate),
+          caption: safeCellText(item.output.trim(), onTruncate),
+        }))
+
+    try {
+      const worksheet = XLSX.utils.json_to_sheet(data)
+      const workbook = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(workbook, worksheet, activeTab === 'srt' ? 'SRT Captions' : 'Title Captions')
+
+      const fileName = activeTab === 'srt' ? 'srt_captions.xlsx' : 'title_captions.xlsx'
+      XLSX.writeFile(workbook, fileName)
+
+      if (truncatedCount > 0) {
+        showTemporarySuccess(`Đã xuất file ${fileName}. Lưu ý: có ${truncatedCount} ô dữ liệu quá dài (>32,767 ký tự) đã được tự động cắt bớt để tương thích với Excel.`)
+      } else {
+        showTemporarySuccess(`Đã xuất thành công file ${fileName}!`)
+      }
+    } catch (err) {
+      console.error(err)
+      setErrorMsg(`Lỗi khi xuất file Excel: ${err.message}`)
+    }
+  }
+
   function showTemporarySuccess(msg) {
     addToast(msg, 'success')
   }
 
-  function handleCopyPrompt(file) {
-    if (!file) return
-    const prompt = buildPrompt(file.captionText)
-    navigator.clipboard.writeText(prompt)
-    setCopiedPromptId(file.id)
-    showTemporarySuccess(`Đã copy Prompt của "${file.name}"!`)
-    setTimeout(() => {
-      setCopiedPromptId(null)
-    }, 2000)
+  async function generateImagePromptForStory(storyText, signal) {
+    const response = await fetch('https://write-content.onrender.com/api/generate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      signal,
+      body: JSON.stringify({
+        prompt: buildImagePromptPrompt(storyText),
+        itemType: 'imagePrompt',
+        cookies: {
+          psid: geminiPsid,
+          psidts: geminiPsidts
+        }
+      }),
+    })
+
+    if (!response.ok) {
+      let detail = ''
+      try {
+        const errJson = await response.json()
+        detail = errJson?.error || JSON.stringify(errJson)
+      } catch {
+        detail = await response.text()
+      }
+      throw new Error(detail || `Lỗi HTTP ${response.status}`)
+    }
+
+    const json = await response.json()
+    return normalizeImagePromptOutput(json.output || '')
   }
 
+  async function generateRewriteForItem(itemType, itemId, text, signal) {
+    const setItemStatus = (id, stat, valText = '', err = '', imagePromptText = '') => {
+      const updater = (prev) =>
+        prev.map((item) =>
+          item.id === id
+            ? itemType === 'titles'
+              ? { ...item, status: stat, output: valText, errorMsg: err, imagePrompt: imagePromptText }
+              : { ...item, status: stat, output: valText, errorMsg: err }
+            : item
+        )
+      if (itemType === 'srt') {
+        setFiles(updater)
+      } else {
+        setTitles(updater)
+      }
+    }
 
-  async function generateCaptionRewriteForFile(fileId, captionText, signal) {
+    setItemStatus(itemId, 'loading')
+
     try {
+      const prompt = itemType === 'srt' ? buildPrompt(text) : buildTitlePrompt(text)
       const response = await fetch('https://write-content.onrender.com/api/generate', {
         method: 'POST',
         headers: {
@@ -547,7 +674,8 @@ export default function App() {
         },
         signal,
         body: JSON.stringify({
-          prompt: buildPrompt(captionText),
+          prompt,
+          itemType,
           cookies: {
             psid: geminiPsid,
             psidts: geminiPsidts
@@ -567,18 +695,23 @@ export default function App() {
       }
 
       const json = await response.json()
-      const text = normalizeGeneratedStoryOutput(json.output || '')
-
-      setFiles((prev) =>
-        prev.map((f) => (f.id === fileId ? { ...f, status: 'done', output: text, errorMsg: '' } : f))
-      )
-      return text
+      const textResult = normalizeGeneratedStoryOutput(json.output || '', itemType)
+      let imagePromptResult = ''
+      if (itemType === 'titles') {
+        try {
+          imagePromptResult = await generateImagePromptForStory(textResult, signal)
+        } catch (imagePromptErr) {
+          if (imagePromptErr.name === 'AbortError') throw imagePromptErr
+          console.error(imagePromptErr)
+        }
+      }
+      setItemStatus(itemId, 'done', textResult, '', imagePromptResult)
+      return textResult
     } catch (err) {
+      if (err.name === 'AbortError') throw err
       console.error(err)
       const errorStr = err.message || 'Đã có lỗi xảy ra khi gọi backend.'
-      setFiles((prev) =>
-        prev.map((f) => (f.id === fileId ? { ...f, status: 'error', errorMsg: errorStr } : f))
-      )
+      setItemStatus(itemId, 'error', '', errorStr)
       throw err
     }
   }
@@ -588,8 +721,16 @@ export default function App() {
     setErrorMsg('')
     setSuccessMsg('')
 
-    if (files.length === 0) {
-      setErrorMsg('Hãy upload ít nhất một file phụ đề .srt.')
+    const listToProcess = activeTab === 'srt' ? files : titles
+    if (listToProcess.length === 0) {
+      setErrorMsg(activeTab === 'srt' ? 'Hãy upload ít nhất một tệp phụ đề .srt.' : 'Hãy nhập hoặc tải lên ít nhất một tiêu đề.')
+      return
+    }
+
+    // Skip processing if all items are already completed
+    const unprocessedItems = listToProcess.filter((item) => item.status !== 'done')
+    if (unprocessedItems.length === 0) {
+      showTemporarySuccess('Tất cả các mục trong hàng đợi đã được viết hoàn thành!')
       return
     }
 
@@ -597,25 +738,34 @@ export default function App() {
     stopRequestedRef.current = false
     abortControllerRef.current = new AbortController()
 
-    // Reset statuses and outputs of existing items
-    const filesToProcess = files.map((f) => ({
-      ...f,
-      status: 'idle',
-      errorMsg: '',
-      output: '',
-    }))
-    setFiles(filesToProcess)
+    // Initialize only unprocessed items
+    const initializedItems = listToProcess.map((item) => {
+      if (item.status === 'done' && item.output && item.output.trim()) {
+        return item
+      }
+      return {
+        ...item,
+        status: 'idle',
+        errorMsg: '',
+        output: '',
+        ...(activeTab === 'titles' ? { imagePrompt: '' } : {}),
+      }
+    })
 
-    // Process them sequentially
-    for (const fileToProcess of filesToProcess) {
+    if (activeTab === 'srt') {
+      setFiles(initializedItems)
+    } else {
+      setTitles(initializedItems)
+    }
+
+    // Process unprocessed sequentially
+    for (const item of initializedItems) {
       if (stopRequestedRef.current) break
-
-      setFiles((prev) =>
-        prev.map((f) => (f.id === fileToProcess.id ? { ...f, status: 'loading' } : f))
-      )
+      if (item.status === 'done') continue
 
       try {
-        await generateCaptionRewriteForFile(fileToProcess.id, fileToProcess.captionText, abortControllerRef.current.signal)
+        const textInput = activeTab === 'srt' ? item.captionText : item.titleText
+        await generateRewriteForItem(activeTab, item.id, textInput, abortControllerRef.current.signal)
       } catch (err) {
         if (err.name === 'AbortError' || stopRequestedRef.current) break
         console.error(err)
@@ -625,7 +775,7 @@ export default function App() {
     abortControllerRef.current = null
     if (stopRequestedRef.current) {
       setStatus('idle')
-      showTemporarySuccess('Da dung response.')
+      showTemporarySuccess('Đã dừng response.')
       return
     }
 
@@ -633,13 +783,46 @@ export default function App() {
     showTemporarySuccess('Hoàn thành quá trình viết truyện tự động bằng Chrome Cookies!')
   }
 
+  async function handleGenerateSingleItem(item) {
+    if (!item) return
+    setErrorMsg('')
+    setSuccessMsg('')
+
+    setStatus('loading')
+    stopRequestedRef.current = false
+    abortControllerRef.current = new AbortController()
+
+    try {
+      const textInput = activeTab === 'srt' ? item.captionText : item.titleText
+      await generateRewriteForItem(activeTab, item.id, textInput, abortControllerRef.current.signal)
+      showTemporarySuccess(`Đã viết câu chuyện thành công cho "${item.name}"!`)
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        console.error(err)
+      }
+    } finally {
+      setStatus('idle')
+      abortControllerRef.current = null
+    }
+  }
+
   async function handleStopGenerate() {
     stopRequestedRef.current = true
     abortControllerRef.current?.abort()
 
-    setFiles((prev) =>
-      prev.map((f) => (f.status === 'loading' ? { ...f, status: 'idle', errorMsg: 'Da dung.' } : f))
-    )
+    const updater = (prev) =>
+      prev.map((f) =>
+        f.status === 'loading'
+          ? { ...f, status: 'idle', errorMsg: 'Đã dừng.' }
+          : f
+      )
+
+    if (activeTab === 'srt') {
+      setFiles(updater)
+    } else {
+      setTitles(updater)
+    }
+
     setStatus('idle')
 
     try {
@@ -650,7 +833,7 @@ export default function App() {
       console.error(err)
     }
 
-    showTemporarySuccess('Da gui lenh dung response.')
+    showTemporarySuccess('Đã gửi lệnh dừng response.')
   }
 
   return (
@@ -676,7 +859,56 @@ export default function App() {
           <form onSubmit={handleGenerate} style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
             <div className="index-grid" style={{ flex: 1, minHeight: 0 }}>
               <div className="index-grid-left">
-                <h2 className="card-title">1. Hướng dẫn thiết lập</h2>
+
+                {/* Tab Switcher & Result count configuration */}
+                <div style={{ marginTop: '1.25rem', marginBottom: '1rem' }}>
+                  <div className="tab-container">
+                    <button
+                      type="button"
+                      className={`tab-btn ${activeTab === 'srt' ? 'active' : ''}`}
+                      onClick={() => {
+                        setActiveTab('srt')
+                      }}
+                    >
+                      🎞️ Tệp SRT (Phụ đề)
+                    </button>
+                    <button
+                      type="button"
+                      className={`tab-btn ${activeTab === 'titles' ? 'active' : ''}`}
+                      onClick={() => {
+                        setActiveTab('titles')
+                      }}
+                    >
+                      📝 Tiêu đề (Nhiều dòng)
+                    </button>
+                  </div>
+                </div>
+
+                {activeTab === 'srt' ? (
+                  <SrtList
+                    files={files}
+                    setFiles={setFiles}
+                    selectedFileId={selectedFileId}
+                    setSelectedFileId={setSelectedFileId}
+                    status={status}
+                    setErrorMsg={setErrorMsg}
+                    showTemporarySuccess={showTemporarySuccess}
+                  />
+                ) : (
+                  <TitleList
+                    titles={titles}
+                    setTitles={setTitles}
+                    selectedTitleId={selectedTitleId}
+                    setSelectedTitleId={setSelectedTitleId}
+                    status={status}
+                    setErrorMsg={setErrorMsg}
+                    showTemporarySuccess={showTemporarySuccess}
+                  />
+                )}
+              </div>
+
+              <div className="index-grid-right">
+                <h2 className="card-title">1. Hướng dẫn thiết lập & Cấu hình</h2>
 
                 <div style={{ marginBottom: '0.5rem', border: '1px solid #e0e0e0', borderRadius: '6px', padding: '0.5rem 0.75rem', background: '#fff' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
@@ -787,118 +1019,32 @@ export default function App() {
                   )}
                 </div>
 
-                <h2 className="card-title">2. Danh sách File SRT</h2>
-                <label className="field">
-                  <span className="field-label">Upload file phụ đề .srt (Chọn nhiều file)</span>
-                  <input type="file" accept=".srt" multiple onChange={handleSrtUpload} disabled={status === 'loading'} />
-                </label>
-
-                {files.length > 0 && (
-                  <div className="file-list-container" style={{ margin: 0, flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
-                    <div className="file-list-header">
-                      <span className="field-label">Hàng đợi ({files.length})</span>
-                      <button type="button" className="clear-all-btn" onClick={handleClearAll} disabled={status === 'loading'}>
-                        Xóa tất cả
-                      </button>
-                    </div>
-                    <div className="file-items" style={{ flex: 1, overflowY: 'scroll' }}>
-                      {files.map((f) => {
-                        const isSelected = f.id === selectedFileId
-                        return (
-                          <div
-                            key={f.id}
-                            className={`file-item ${isSelected ? 'active' : ''} ${f.status}`}
-                            onClick={() => setSelectedFileId(f.id)}
-                            style={{ cursor: 'pointer' }}
-                          >
-                            <div className="file-item-info">
-                              <span className="file-item-name" title={f.name}>
-                                {f.name}
-                              </span>
-                              <span className={`file-status-badge ${f.status}`}>
-                                {f.status === 'idle' && '⏳ Chờ xử lý'}
-                                {f.status === 'loading' && '⚙️ Đang viết bằng Chrome Cookies (Chạy ngầm)...'}
-                                {f.status === 'done' && '✅ Hoàn thành'}
-                                {f.status === 'error' && '❌ Lỗi'}
-                              </span>
-                            </div>
-
-                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                              <button
-                                type="button"
-                                className={`copy-btn ${copiedPromptId === f.id ? 'copied' : ''}`}
-                                style={{
-                                  padding: '4px 10px',
-                                  fontSize: '0.75rem',
-                                  whiteSpace: 'nowrap',
-                                  margin: 0,
-                                  borderRadius: '4px',
-                                  backgroundColor: copiedPromptId === f.id ? 'var(--moss)' : 'var(--moss-light)',
-                                  color: '#fff',
-                                  border: 'none',
-                                  cursor: 'pointer',
-                                }}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleCopyPrompt(f)
-                                }}
-                                title="Sao chép Prompt gửi sang Gemini (Thủ công)"
-                                disabled={status === 'loading'}
-                              >
-                                {copiedPromptId === f.id ? '✓ Đã copy' : '📋 Copy Prompt'}
-                              </button>
-                              <button
-                                type="button"
-                                className="file-remove-btn"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleRemoveFile(f.id)
-                                }}
-                                title="Xóa file"
-                                style={{ margin: 0 }}
-                                disabled={status === 'loading'}
-                              >
-                                &times;
-                              </button>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="index-grid-right">
                 <h2 className="card-title">3. Biên tập & Trích xuất</h2>
-                {selectedFile ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-                    <label className="field" style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, margin: 0, overflow: 'hidden' }}>
-                      <span className="field-label">Lời thoại đã trích xuất ({selectedFile.name})</span>
-                      <textarea
-                        style={{ flex: 1, minHeight: '60px', resize: 'none' }}
-                        placeholder="Lời thoại trích từ file phụ đề sẽ hiện ở đây."
-                        value={selectedFile.captionText}
-                        onChange={(e) => handleCaptionChange(e.target.value)}
-                        disabled={status === 'loading'}
-                      />
-                    </label>
-                    <p className="helper-text" style={{ marginTop: '0.3rem', marginBottom: '0.5rem' }}>
-                      Số ký tự lời thoại: {selectedFile.captionText.trim().length.toLocaleString('vi-VN')}
-                    </p>
-                  </div>
+                {activeTab === 'srt' ? (
+                  <SrtEditor
+                    selectedFile={files.find((f) => f.id === selectedFileId)}
+                    setFiles={setFiles}
+                    status={status}
+                  />
                 ) : (
-                  <div className="no-file-selected" style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 0 1.5rem 0' }}>
-                    Hãy upload file SRT hoặc chọn một file từ danh sách để xem lời thoại.
-                  </div>
+                  <TitleEditor
+                    selectedTitle={titles.find((t) => t.id === selectedTitleId)}
+                    setTitles={setTitles}
+                    status={status}
+                  />
                 )}
 
                 {errorMsg && <p className="error-text" style={{ marginTop: '0.5rem' }}>{errorMsg}</p>}
                 {successMsg && <p className="success-text" style={{ marginTop: '0.5rem', color: 'green', fontWeight: 'bold' }}>{successMsg}</p>}
 
                 <div style={{ display: 'flex', gap: '0.5rem', marginTop: 'auto' }}>
-                  <button type="submit" className="generate-btn" style={{ margin: 0, flex: 1 }} disabled={status === 'loading' || files.length === 0}>
-                    {status === 'loading' ? '⏳ Đang viết truyện bằng Chrome Cookies (Chạy ngầm)...' : '🚀 Viết tự động bằng Chrome Cookies cho tất cả các file'}
+                  <button type="submit" className="generate-btn" style={{ margin: 0, flex: 1 }} disabled={status === 'loading' || (activeTab === 'srt' ? files : titles).length === 0}>
+                    {status === 'loading'
+                      ? '⏳ Đang viết truyện bằng Chrome Cookies (Chạy ngầm)...'
+                      : activeTab === 'srt'
+                        ? '🚀 Viết tự động bằng Chrome Cookies cho tất cả các file SRT'
+                        : '🚀 Viết tự động bằng Chrome Cookies cho tất cả các Tiêu đề'
+                    }
                   </button>
                   {status === 'loading' && (
                     <button
@@ -917,26 +1063,21 @@ export default function App() {
         </section>
 
         <section className="card paper" ref={outputRef}>
-          {selectedFile ? (
+          {selectedItem ? (
             <>
-              <div className="paper-head">
+              <div className="paper-head" style={{ marginBottom: '0.75rem' }}>
                 <span className="paper-label" style={{ fontWeight: 'bold' }}>
-                  Nhập & Xem trước: {selectedFile.name}
+                  Xem trước: {selectedItem.name}
                 </span>
-                {selectedFile.output && (
-                  <span className="word-count">
-                    {selectedFile.output.trim().length.toLocaleString('vi-VN')} ký tự
-                  </span>
-                )}
               </div>
 
-              {selectedFile.status === 'error' && selectedFile.errorMsg && (
+              {selectedItem.status === 'error' && selectedItem.errorMsg && (
                 <div className="error-text" style={{ padding: '1rem', backgroundColor: '#fff0f0', border: '1px solid #ffcccc', borderRadius: '6px', marginBottom: '1rem' }}>
-                  <strong>Lỗi tự động hóa:</strong> {selectedFile.errorMsg}
+                  <strong>Lỗi tự động hóa:</strong> {selectedItem.errorMsg}
                 </div>
               )}
 
-              {selectedFile.status === 'loading' && (
+              {selectedItem.status === 'loading' && (
                 <div style={{ textAlign: 'center', padding: '3rem 1rem', color: '#888' }}>
                   <p className="placeholder" style={{ fontSize: '1.1rem' }}>
                     ⏳ Đang viết truyện tự động bằng Chrome Cookies...
@@ -944,44 +1085,134 @@ export default function App() {
                 </div>
               )}
 
-              {selectedFile.status === 'idle' && !selectedFile.output && (
+              {selectedItem.status === 'done' && selectedItem.output && (
+                <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                    <span className="word-count">
+                      {selectedItem.output.trim().length.toLocaleString('vi-VN')} ký tự | {selectedItem.output.split(/\s+/).filter(Boolean).length} từ
+                    </span>
+                    <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        className="generate-btn"
+                        style={{
+                          padding: '0.35rem 0.7rem',
+                          margin: 0,
+                          borderRadius: '4px',
+                          backgroundColor: 'var(--moss)',
+                          color: '#fff',
+                          fontSize: '0.8rem',
+                          height: '32px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '0.25rem',
+                          whiteSpace: 'nowrap',
+                          cursor: 'pointer',
+                          border: 'none'
+                        }}
+                        onClick={() => handleGenerateSingleItem(selectedItem)}
+                        disabled={status === 'loading'}
+                      >
+                        🔄 Viết lại
+                      </button>
+                      <button
+                        type="button"
+                        className={`copy-btn ${copiedStoryId === selectedItem.id ? 'copied' : ''}`}
+                        style={{
+                          padding: '0.35rem 0.7rem',
+                          margin: 0,
+                          borderRadius: '4px',
+                          fontSize: '0.8rem',
+                          height: '32px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '0.25rem',
+                          whiteSpace: 'nowrap',
+                          cursor: 'pointer'
+                        }}
+                        onClick={() => handleCopy(selectedItem.output, selectedItem.id)}
+                      >
+                        {copiedStoryId === selectedItem.id ? '✓ Đã sao chép' : '📋 Sao chép'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="output-text" style={{ background: '#fcfcfc', padding: '1.5rem', borderRadius: '8px', border: '1px solid #eee', flex: 1, overflowY: 'auto' }}>
+                    {selectedItem.output.split(/\n+/).map((para, i) =>
+                      para.trim() ? <p key={`${para.slice(0, 16)}-${i}`} style={{ marginBottom: '1rem' }}>{para}</p> : null
+                    )}
+                  </div>
+                  {activeTab === 'titles' && (
+                  <div style={{ marginTop: '1rem', borderTop: '1px solid #ddd', paddingTop: '1rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
+                      <span className="paper-label" style={{ fontWeight: 'bold' }}>
+                        Prompt image
+                      </span>
+                      <button
+                        type="button"
+                        className={`copy-btn ${copiedImagePromptId === selectedItem.id ? 'copied' : ''}`}
+                        style={{
+                          padding: '0.35rem 0.7rem',
+                          margin: 0,
+                          borderRadius: '4px',
+                          fontSize: '0.8rem',
+                          height: '32px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '0.25rem',
+                          whiteSpace: 'nowrap',
+                          cursor: selectedItem.imagePrompt ? 'pointer' : 'not-allowed'
+                        }}
+                        onClick={() => handleCopyImagePrompt(selectedItem.imagePrompt, selectedItem.id)}
+                        disabled={!selectedItem.imagePrompt}
+                      >
+                        {copiedImagePromptId === selectedItem.id ? '✓ Đã sao chép' : '📋 Sao chép prompt'}
+                      </button>
+                    </div>
+                    <textarea
+                      readOnly
+                      value={selectedItem.imagePrompt || ''}
+                      placeholder="Prompt image sẽ được tạo tự động sau khi câu chuyện hoàn thành."
+                      style={{
+                        width: '100%',
+                        minHeight: '120px',
+                        resize: 'vertical',
+                        background: '#fcfcfc',
+                        border: '1px solid #eee',
+                        borderRadius: '8px',
+                        padding: '0.9rem',
+                        fontSize: '0.9rem',
+                        lineHeight: 1.55
+                      }}
+                    />
+                  </div>
+                  )}
+                </div>
+              )}
+
+              {selectedItem.status === 'idle' && !selectedItem.output && (
                 <div style={{ textAlign: 'center', padding: '3rem 1rem', color: '#888' }}>
                   <p className="placeholder" style={{ fontSize: '1.1rem' }}>
                     ⏳ Chờ viết truyện tự động...
                   </p>
                 </div>
               )}
-
-              {selectedFile.output && (
-                <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden', marginTop: '1.5rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '1rem' }}>
-                    <button
-                      type="button"
-                      className={`copy-btn ${copiedStoryId === selectedFile.id ? 'copied' : ''}`}
-                      style={{ padding: '0.6rem 1.2rem', margin: 0, borderRadius: '6px' }}
-                      onClick={() => handleCopy(selectedFile.output, selectedFile.id)}
-                    >
-                      {copiedStoryId === selectedFile.id ? '✓ Đã sao chép' : '📋 Sao chép câu chuyện'}
-                    </button>
-                  </div>
-                  <div className="output-text" style={{ background: '#fcfcfc', padding: '1.5rem', borderRadius: '8px', border: '1px solid #eee', flex: 1, overflowY: 'auto' }}>
-                    {selectedFile.output.split(/\n+/).map((para, i) =>
-                      para.trim() ? <p key={`${para.slice(0, 16)}-${i}`} style={{ marginBottom: '1rem' }}>{para}</p> : null
-                    )}
-                  </div>
-                </div>
-              )}
             </>
           ) : (
             <div style={{ textAlign: 'center', padding: '3rem 1rem', color: '#888' }}>
               <p className="placeholder" style={{ fontSize: '1.1rem', marginBottom: '1.5rem' }}>
-                Hãy tải lên và chọn một file phụ đề để bắt đầu.
+                {activeTab === 'srt'
+                  ? 'Hãy tải lên và chọn một file phụ đề để bắt đầu.'
+                  : 'Hãy nhập hoặc tải lên và chọn một tiêu đề để bắt đầu.'
+                }
               </p>
             </div>
           )}
 
-          {files.some((f) => f.output.trim()) && (
-            <div style={{ marginTop: '2.5rem', borderTop: '2px solid #ddd', paddingTop: '1.5rem', textAlign: 'center' }}>
+          {((activeTab === 'srt' ? files : titles).some((item) => item.output && item.output.trim())) && (
+            <div style={{ marginTop: '2.5rem', borderTop: '2px solid #ddd', paddingTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.8rem', textAlign: 'center' }}>
               <button
                 type="button"
                 className={`copy-all-btn ${copiedAll ? 'copied' : ''}`}
@@ -989,7 +1220,24 @@ export default function App() {
                 onClick={handleCopyAll}
                 disabled={status === 'loading'}
               >
-                {copiedAll ? '✓ Đã sao chép tất cả' : `Sao chép tất cả truyện đã viết (${files.filter((f) => f.output.trim()).length} bài)`}
+                {copiedAll
+                  ? '✓ Đã sao chép tất cả'
+                  : `Sao chép tất cả truyện đã viết của ${activeTab === 'srt' ? 'các file SRT' : 'các Tiêu đề'} (${
+                      (activeTab === 'srt' ? files : titles).filter((item) => item.output && item.output.trim()).length
+                    } bài)`
+                }
+              </button>
+
+              <button
+                type="button"
+                className="generate-btn"
+                style={{ width: '100%', padding: '1rem', backgroundColor: '#217346', borderColor: '#1e663e', color: '#fff', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
+                onClick={handleExportXlsx}
+                disabled={status === 'loading'}
+              >
+                📊 Xuất tệp Excel (.xlsx) ({
+                  (activeTab === 'srt' ? files : titles).filter((item) => item.output && item.output.trim()).length
+                } bài)
               </button>
             </div>
           )}

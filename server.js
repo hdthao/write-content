@@ -60,7 +60,8 @@ function removeDebugAndCodeLines(text) {
     .trim();
 }
 
-function normalizeGeneratedStoryOutput(text) {
+function normalizeGeneratedStoryOutput(text, itemType = 'srt') {
+  const isTitleMode = itemType === 'titles';
   const removeEmoji = (value) =>
     value.replace(/[\u{1F1E6}-\u{1F1FF}\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}]/gu, '');
 
@@ -150,11 +151,41 @@ function normalizeGeneratedStoryOutput(text) {
     titleEndIndex += 1;
   }
 
-  const title = removeEmoji(lines.slice(fallbackTitleIndex, titleEndIndex + 1).join(' '))
+  const titleRaw = removeEmoji(lines.slice(fallbackTitleIndex, titleEndIndex + 1).join(' '))
     .replace(/^[\s#*_\-]+/, '')
     .replace(/[\s*_\-]+$/, '')
-    .toUpperCase()
     .trim();
+
+  const formatTitle = (value) => {
+    const trimmed = value.replace(/\s+/g, ' ').trim();
+    const letters = trimmed.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ]/g, '');
+    if (!letters) return trimmed;
+
+    const upperLetters = letters.replace(/[a-zà-öø-ÿ]/g, '').length;
+    if (upperLetters / letters.length <= 0.75) return trimmed;
+
+    const lower = trimmed.toLocaleLowerCase('es');
+    return lower.charAt(0).toLocaleUpperCase('es') + lower.slice(1);
+  };
+
+  const title = isTitleMode ? formatTitle(titleRaw) : titleRaw.toUpperCase();
+  const normalizedTitleForCompare = removeEmoji(titleRaw).trim().toUpperCase();
+
+  const pushFormattedLine = (line) => {
+    const normalized = line
+      .replace(/\u2014\.\s+/g, '\u2014\n')
+      .replace(/([.!?])\s+(\u2014(?=\S))/g, '$1\n$2')
+      .replace(/([^\n])\s+(\u2014(?=\S))/g, (match, before, dash, offset, value) => {
+        const previous = value.slice(Math.max(0, offset - 80), offset);
+        return /[.!?]\s*$/.test(previous) ? `${before}\n${dash}` : match;
+      });
+
+    normalized.split('\n').forEach((part) => {
+      const cleanedPart = part.trim();
+      if (!cleanedPart) return;
+      bodyLines.push(cleanedPart);
+    });
+  };
 
   const bodyLines = [];
   let previousWasBlank = false;
@@ -162,7 +193,7 @@ function normalizeGeneratedStoryOutput(text) {
     let line = lines[i].trim();
     if (isJunkLine(line)) continue;
     if (isParteLine(line)) continue;
-    if (removeEmoji(line).trim().toUpperCase() === title) continue;
+    if (removeEmoji(line).trim().toUpperCase() === normalizedTitleForCompare) continue;
 
     const isCta = /^Comenta\b/i.test(line);
     if (!isCta) line = removeEmoji(line).trim();
@@ -174,14 +205,43 @@ function normalizeGeneratedStoryOutput(text) {
       continue;
     }
 
-    bodyLines.push(line);
+    if (isTitleMode) {
+      pushFormattedLine(line);
+    } else {
+      bodyLines.push(line);
+    }
     previousWasBlank = false;
   }
 
-  return [title, 'PARTE 1', '', ...bodyLines]
+  return (isTitleMode ? [title, '', ...bodyLines] : [title, 'PARTE 1', '', ...bodyLines])
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+function normalizeImagePromptOutput(text) {
+  const cleaned = text
+    .replace(/^\uFEFF/, '')
+    .replace(/\r/g, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !/^(PARTE|PART|SECCION|SECCIÓN|SECTION|CAPITULO|CAPÍTULO|CHAPTER)\s*[-:]?\s*1\b/i.test(line))
+    .join(' ')
+    .trim()
+    .replace(/^```(?:[a-zA-Z0-9_?&=]+)?\n([\s\S]*?)\n```$/i, '$1')
+    .replace(/^(image prompt|prompt|final prompt)\s*:\s*/i, '')
+    .replace(/^["'`]+/, '')
+    .replace(/["'`]+$/, '')
+    .trim();
+
+  const letters = cleaned.replace(/[^A-Za-z]/g, '');
+  if (!letters) return cleaned;
+
+  const upperLetters = letters.replace(/[a-z]/g, '').length;
+  if (upperLetters / letters.length <= 0.75) return cleaned;
+
+  const lower = cleaned.toLocaleLowerCase('en');
+  return lower.charAt(0).toLocaleUpperCase('en') + lower.slice(1);
 }
 
 // Helper to spawn the gemini-webapi-mcp process
@@ -302,7 +362,8 @@ function handleMcpMessage(msg) {
 
   // 2. Handle pending requests (tool call results)
   if (msg.id && pendingRequests.has(msg.id)) {
-    const res = pendingRequests.get(msg.id);
+    const pending = pendingRequests.get(msg.id);
+    const res = pending.res;
     pendingRequests.delete(msg.id);
 
     if (msg.error) {
@@ -319,7 +380,9 @@ function handleMcpMessage(msg) {
       if (match) {
         text = match[1].trim();
       }
-      text = normalizeGeneratedStoryOutput(text);
+      text = pending.itemType === 'imagePrompt'
+        ? normalizeImagePromptOutput(text)
+        : normalizeGeneratedStoryOutput(text, pending.itemType);
       
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ output: text }));
@@ -483,7 +546,7 @@ const server = http.createServer((req, res) => {
 
     req.on('end', () => {
       try {
-        const { prompt, cookies } = JSON.parse(body);
+        const { prompt, cookies, itemType = 'srt' } = JSON.parse(body);
         if (!prompt) {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Prompt không được bỏ trống.' }));
@@ -518,7 +581,7 @@ const server = http.createServer((req, res) => {
               attempts++;
               if (isInitialized) {
                 clearInterval(checkInterval);
-                sendToolCall(prompt, res);
+                sendToolCall(prompt, res, itemType);
               } else if (attempts >= 30 || !mcpServerAvailable) {
                 clearInterval(checkInterval);
                 res.writeHead(503, { 'Content-Type': 'application/json' });
@@ -543,7 +606,7 @@ const server = http.createServer((req, res) => {
           return;
         }
 
-        sendToolCall(prompt, res);
+        sendToolCall(prompt, res, itemType);
 
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -556,7 +619,7 @@ const server = http.createServer((req, res) => {
   }
 });
 
-function sendToolCall(prompt, res) {
+function sendToolCall(prompt, res, itemType = 'srt') {
   const requestId = msgId++;
   const toolCall = {
     jsonrpc: "2.0",
@@ -571,7 +634,7 @@ function sendToolCall(prompt, res) {
     }
   };
 
-  pendingRequests.set(requestId, res);
+  pendingRequests.set(requestId, { res, itemType });
   writeToMcp(toolCall);
 }
 

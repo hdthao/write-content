@@ -936,3 +936,52 @@ textarea {
     gap: 1.5rem;
   }
 }
+
+/* Custom Tabs Styles */
+.tab-container {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 1.2rem;
+  border-bottom: 1px solid var(--paper-line);
+  padding-bottom: 0px;
+}
+
+.tab-btn {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.55rem 1.1rem;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  margin-bottom: -1px;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.tab-btn:hover {
+  color: var(--moss);
+  background: rgba(63, 109, 92, 0.05);
+}
+
+.tab-btn.active {
+  color: var(--moss);
+  background: #fffdf8;
+  border-color: var(--paper-line);
+  border-bottom: 1px solid #fffdf8;
+}
+
+/* Result tab wrapper styles */
+.result-tabs-container {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--paper-line);
+  padding-bottom: 0.6rem;
+}
