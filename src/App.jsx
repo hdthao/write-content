@@ -40,42 +40,31 @@ ABSOLUTE OUTPUT RULES:
 function buildTitlePrompt(titleText) {
   return `Bạn là một người kể chuyện chuyên nghiệp và tiểu thuyết gia tài ba, có khả năng tạo ra những câu chuyện hấp dẫn, giàu cảm xúc và khó lòng đặt xuống.
 
-Dựa vào tiêu đề sau, hãy DỊCH NGUYÊN NGHĨA tiêu đề đầu vào sang tiếng Tây Ban Nha. Không được viết lại theo ý mới, không thêm chi tiết, không bỏ chi tiết, không đổi nhân vật/sự kiện/cảm xúc chính. Chỉ được điều chỉnh rất nhẹ để câu tiếng Tây Ban Nha tự nhiên và đúng ngữ pháp. KHÔNG viết hoa toàn bộ tiêu đề này, chỉ viết hoa chữ cái đầu hoặc theo đúng ngữ pháp:
+Dựa vào tiêu đề sau:
 TIÊU ĐỀ GỐC: ${titleText}
+
+LƯU Ý QUAN TRỌNG VỀ DÒNG ĐẦU TIÊN (HOOK):
+- Dòng đầu tiên của kết quả phải là phần mở đầu (hook) của câu chuyện viết bằng tiếng Tây Ban Nha, được dịch và viết lại một cách cực kỳ cuốn hút, kịch tính dựa trên nội dung của TIÊU ĐỀ GỐC.
+- Cấu trúc của câu hook phải bắt đầu bằng một xung đột hoặc tình huống cao trào (phản bội, xúc phạm, khinh thường, hoặc hành vi xấu xa) và BẮT BUỘC phải kết thúc bằng một cú ngoặt bất ngờ (plot twist) hoặc một bí mật/kế hoạch trả thù chuẩn bị diễn ra để gây tò mò cực độ cho người xem (ví dụ: "...hắn không hề hay biết rằng...", "...không bao giờ ngờ rằng...", "...và người đàn ông bắt đầu run rẩy").
+- Bạn TUYỆT ĐỐI KHÔNG viết lại tiêu đề của câu chuyện (không viết các tiêu đề ngắn kiểu tên truyện ở dòng đầu tiên). Hãy bắt đầu trực tiếp bằng câu hook này ở dòng đầu tiên.
+- Dòng đầu tiên này chỉ viết hoa chữ cái đầu hoặc theo đúng quy tắc ngữ pháp, tuyệt đối KHÔNG viết hoa toàn bộ (ALL CAPS) và không chứa emoji.
 
 Hãy viết TOÀN BỘ câu chuyện từ đầu đến cuối, hoàn toàn bằng tiếng Tây Ban Nha theo các yêu cầu sau:
 
 Yêu cầu bắt buộc:
 
-- Toàn bộ phần nội dung câu chuyện phải có tối thiểu 3500 từ, không tính tiêu đề. Để tránh bị thiếu độ dài, hãy viết khoảng 3500-4000 từ. Không dùng tiêu chuẩn ký tự; chỉ tính theo số từ. Đây là điều kiện hoàn thành quan trọng nhất: nếu chưa đạt ít nhất 3500 từ thì tuyệt đối chưa được kết thúc câu chuyện.
-
-- Viết câu chuyện liền mạch, không chia nhỏ thành các phần và BẮT BUỘC TUYỆT ĐỐI không sử dụng từ "PARTE", các đầu mục, hay các dòng phân chia phần nào trong câu chuyện.
+- Toàn bộ phần nội dung câu chuyện phải có tối thiểu 3000 từ, không tính tiêu đề. Để tránh bị thiếu độ dài, hãy viết khoảng 3000-3200 từ. Không dùng tiêu chuẩn ký tự; chỉ tính theo số từ. Đây là điều kiện hoàn thành quan trọng nhất: nếu chưa đạt ít nhất 3000 từ thì tuyệt đối chưa được kết thúc câu chuyện.
 
 - Câu chuyện phải cực kỳ lôi cuốn, giàu cảm xúc và hấp dẫn ngay từ câu đầu tiên để người đọc không thể ngừng đọc.
 
 - Xây dựng sự căng thẳng một cách tự nhiên và mang đến một cái kết bất ngờ, gây sốc và khó đoán mà KHÔNG AI có thể dự đoán được — tạo nên một cái kết bất ngờ và có hậu.
 
-- Được viết theo phong cách sống động và hấp dẫn như một tiểu thuyết, với những mô tả sinh động, cảm xúc sâu sắc và đối thoại tự nhiên.
-
-- Câu văn cần ngắn gọn, rõ ràng, dễ đọc, nhưng chiều dài câu phải linh hoạt (kết hợp tự nhiên cả câu ngắn và câu dài, không áp dụng một khuôn mẫu cố định hay ép buộc câu nào cũng ngắn). Tránh viết những câu quá dài dòng lê thê chứa quá nhiều mệnh đề phụ gây nhiễu, hãy ưu tiên sự mạch lạc và cuốn hút. Chia các đoạn văn một cách tự nhiên dựa theo diễn biến câu chuyện.
+- Viết theo phong cách tiểu thuyết sống động với những mô tả phong phú, cảm xúc sâu sắc và lời thoại tự nhiên
 
 - Các đoạn hội thoại PHẢI LUÔN được xuống dòng mới và bắt đầu bằng dấu gạch ngang (—). Mỗi dòng hội thoại nằm trên một đoạn/dòng riêng biệt.
 Ví dụ:
 — Tôi không biết anh sẽ đến, cô ấy nói mà không nhìn anh.
 — Tôi phải làm vậy, anh trả lời.
-
-ABSOLUTE FORMAT RULES:
-- Return only the final Spanish story.
-- The first non-empty line must be a faithful Spanish translation of the original input title. Preserve the exact meaning, characters, events, relationships, stakes, and emotional intent. Do not invent a new title, summarize it differently, dramatize it, soften it, or change its meaning.
-- Write that translated title in natural title/sentence case. Never write the title in ALL CAPS.
-- The story body must contain at least 3500 words, excluding the title. Aim for 3500-4000 words so the final story never falls short. Do not use a character-count target; the length requirement is based only on word count. Never end the story until the body has reached 3500+ words.
-- Do not write "PARTE", "PARTE 1", "Parte 1", chapter names, section headers, numbered headings, or divider lines anywhere.
-- Keep sentences clear and easy to read, but allow their lengths to vary naturally (a mix of short and long sentences, not fixed to a single pattern). Avoid overly long, run-on sentences with too many clauses, focusing on clarity instead.
-- Group sentences into paragraphs naturally based on the flow of the story. Sentences sharing the same idea or related actions should be grouped into a single paragraph (typically 3-5 sentences per paragraph). Avoid putting every single sentence on its own line/paragraph like a short video script, except for dialogue or sentences that need strong emphasis.
-- Every direct dialogue line must start at the beginning of a new line with "—". Never attach direct dialogue after narration in the same line.
-- If narration follows a dialogue line, keep it on the same dialogue line only when it is a short speech tag. Otherwise, move the narration to a new paragraph.
-- Do not add summaries, warnings, markdown, code blocks, word counts, or formatting notes.
-
 Hãy viết toàn bộ câu chuyện ngay bây giờ, không tóm tắt hay cảnh báo, trực tiếp nội dung tường thuật.`
 }
 
@@ -143,8 +132,8 @@ function normalizeGeneratedStoryOutput(outputText, itemType = 'srt') {
       .replace(/("""|'''|`{3}|["'`])\s*[;,]?\s*$/, '')
       .trim()
 
-  const cleanLine = (line) =>
-    unwrapCodeStringLine(line)
+  const cleanLine = (line) => {
+    let cleaned = unwrapCodeStringLine(line)
       .replace(/^[#>*\s]+/, '')
       .replace(/^\d+\.\s+/, '')
       .replace(/^(title|titulo|título|story title)\s*=\s*/i, '')
@@ -152,6 +141,14 @@ function normalizeGeneratedStoryOutput(outputText, itemType = 'srt') {
       .replace(/^["'`]+/, '')
       .replace(/["'`,]+$/, '')
       .trim()
+    if (cleaned.startsWith('—') && /\s*[\u2014\u2013-]\s*$/.test(cleaned)) {
+      cleaned = cleaned.replace(/\s*[\u2014\u2013-]\s*$/, '').trim()
+      if (!/[.!?…]$/.test(cleaned)) {
+        cleaned += '.'
+      }
+    }
+    return cleaned
+  }
 
   const isParteLine = (line) => /^(PARTE|PART|SECCION|SECCIÓN|SECTION|CAPITULO|CAPÍTULO|CHAPTER)\s*[-:]?\s*1\b/i.test(line.trim())
 
@@ -560,7 +557,8 @@ export default function App() {
     const str = String(text)
     if (str.length > 32767) {
       if (onTruncate) onTruncate()
-      return str.slice(0, 32750) + '... [TRUNCATED BY EXCEL LIMIT]'
+      const suffix = '... [TRUNCATED BY EXCEL LIMIT]'
+      return str.slice(0, 32767 - suffix.length) + suffix
     }
     return str
   }
@@ -1088,7 +1086,7 @@ export default function App() {
               {selectedItem.status === 'done' && selectedItem.output && (
                 <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, overflow: 'hidden' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                    <span className="word-count">
+                    <span className="word-count" style={{ color: (activeTab === 'titles' && selectedItem.output.trim().length > 32767) ? '#dc3545' : 'inherit', fontWeight: (activeTab === 'titles' && selectedItem.output.trim().length > 32767) ? 'bold' : 'normal' }}>
                       {selectedItem.output.trim().length.toLocaleString('vi-VN')} ký tự | {selectedItem.output.split(/\s+/).filter(Boolean).length} từ
                     </span>
                     <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
@@ -1138,6 +1136,7 @@ export default function App() {
                       </button>
                     </div>
                   </div>
+
                   <div className="output-text" style={{ background: '#fcfcfc', padding: '1.5rem', borderRadius: '8px', border: '1px solid #eee', flex: 1, overflowY: 'auto' }}>
                     {selectedItem.output.split(/\n+/).map((para, i) =>
                       para.trim() ? <p key={`${para.slice(0, 16)}-${i}`} style={{ marginBottom: '1rem' }}>{para}</p> : null

@@ -699,6 +699,19 @@ textarea {
   box-shadow: inset 3px 0 0 var(--moss);
 }
 
+.file-item.limit-exceeded {
+  border-color: #dc3545;
+}
+
+.file-item.limit-exceeded:hover {
+  border-color: #bd2130;
+}
+
+.file-item.limit-exceeded.active {
+  border-color: #dc3545;
+  box-shadow: inset 3px 0 0 #dc3545;
+}
+
 .file-item-info {
   display: flex;
   flex-direction: column;

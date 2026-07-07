@@ -157,10 +157,11 @@ export function TitleList({
           <div className="file-items" style={{ flex: 1, overflowY: 'scroll' }}>
             {titles.map((t) => {
               const isSelected = t.id === selectedTitleId
+              const isTooLong = t.output && t.output.trim().length > 32767
               return (
                 <div
                   key={t.id}
-                  className={`file-item ${isSelected ? 'active' : ''} ${t.status}`}
+                  className={`file-item ${isSelected ? 'active' : ''} ${t.status} ${isTooLong ? 'limit-exceeded' : ''}`}
                   onClick={() => setSelectedTitleId(t.id)}
                   style={{ cursor: 'pointer' }}
                 >
