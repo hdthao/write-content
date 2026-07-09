@@ -157,6 +157,7 @@ function normalizeGeneratedStoryOutput(outputText, itemType = 'srt') {
     if (!trimmed) return false
     return (
       /^```/.test(trimmed) ||
+      /^[-*_]{3,}$/.test(trimmed) ||
       /code_reference|code_event_index/i.test(trimmed) ||
       /^#/.test(trimmed) ||
       /^\/\//.test(trimmed) ||
@@ -505,9 +506,8 @@ export default function App() {
   }
 
   const titleCaptionEnding = `❤️ GRACIAS POR LEER ESTA PARTE DE LA HISTORIA 🙏📖
-⚠️ LA CONTINUACIÓN Y EL FINAL YA ESTÁN EN LOS COMENTARIOS 👇
-💬 Si no los ves, toca "VER TODOS LOS COMENTARIOS" y encuéntralos ahí. 👇
-👉 Si quieres saber cómo termina... ¡Deja un "SÍ" en los comentarios! ⬇️✨`
+⚠️ LA SIGUIENTE PARTE ESTÁ EN LA SECCIÓN DE COMENTARIOS 👇
+💬 Si no la ves, haz clic en "VER TODOS LOS COMENTARIOS" y ahí la encontrarás. 👇`
 
   function getStoryTitle(outputText, fallbackTitle) {
     return outputText
@@ -517,39 +517,96 @@ export default function App() {
       .find(Boolean) || fallbackTitle
   }
 
-  function buildTitleCaption(outputText) {
+  function splitTitleStory(outputText) {
     const fullText = outputText.replace(/\r/g, '').trim()
-    if (!fullText) return titleCaptionEnding
+    const parte2Ending = `ME ENCANTARÍA LEER SUS COMENTARIOS ANTES DE CONTINUAR CON LA PARTE FINAL. SI QUIEREN LEER LA ÚLTIMA PARTE DE ESTA HISTORIA, POR FAVOR DENLE “ME GUSTA” A LA PUBLICACIÓN O DEJEN UN COMENTARIO. ❤️ ¡GRACIAS POR SU APOYO!`
 
-    const words = [...fullText.matchAll(/[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*/gu)]
-    if (words.length <= 700) {
-      return `${fullText}\n\n${titleCaptionEnding}`.trim()
-    }
-
-    const minEnd = words[499].index + words[499][0].length
-    const maxEnd = words[699].index + words[699][0].length
-    const searchWindow = fullText.slice(minEnd, maxEnd)
-    const sentenceEndPattern = /[.!?…](?:["”»])?(?=\s|$)/g
-    let cutIndex = -1
-    let match
-
-    while ((match = sentenceEndPattern.exec(searchWindow)) !== null) {
-      cutIndex = minEnd + match.index + match[0].length
-    }
-
-    if (cutIndex === -1) {
-      const paragraphBreakIndex = searchWindow.lastIndexOf('\n\n')
-      if (paragraphBreakIndex !== -1) {
-        cutIndex = minEnd + paragraphBreakIndex
+    if (!fullText) {
+      return {
+        caption: titleCaptionEnding,
+        parte2: parte2Ending
       }
     }
 
-    if (cutIndex === -1) {
-      cutIndex = maxEnd
+    const words = [...fullText.matchAll(/[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*/gu)]
+    let captionCutIndex = -1
+
+    if (words.length <= 700) {
+      captionCutIndex = fullText.length
+    } else {
+      const minEnd = words[499].index + words[499][0].length
+      const maxEnd = words[699].index + words[699][0].length
+      const searchWindow = fullText.slice(minEnd, maxEnd)
+      const sentenceEndPattern = /[.!?…](?:["”»])?(?=\s|$)/g
+      let cutIndex = -1
+      let match
+
+      while ((match = sentenceEndPattern.exec(searchWindow)) !== null) {
+        cutIndex = minEnd + match.index + match[0].length
+      }
+
+      if (cutIndex === -1) {
+        const paragraphBreakIndex = searchWindow.lastIndexOf('\n\n')
+        if (paragraphBreakIndex !== -1) {
+          cutIndex = minEnd + paragraphBreakIndex
+        }
+      }
+
+      if (cutIndex === -1) {
+        cutIndex = maxEnd
+      }
+      captionCutIndex = cutIndex
     }
 
-    const excerpt = fullText.slice(0, cutIndex).trim()
-    return `${excerpt}\n\n${titleCaptionEnding}`.trim()
+    const captionExcerpt = fullText.slice(0, captionCutIndex).trim()
+    const caption = `${captionExcerpt}\n\n${titleCaptionEnding}`.trim()
+
+    // PARTE 2 starts from captionCutIndex
+    const remainingText = fullText.slice(captionCutIndex).trim()
+    let parte2 = ''
+
+    if (!remainingText) {
+      parte2 = parte2Ending
+    } else {
+      const remainingWords = [...remainingText.matchAll(/[\p{L}\p{N}]+(?:['’\-][\p{L}\p{N}]+)*/gu)]
+      let parte2CutIndex = -1
+
+      if (remainingWords.length <= 300) {
+        parte2CutIndex = remainingText.length
+      } else {
+        const minEnd = remainingWords[199].index + remainingWords[199][0].length
+        const maxEnd = remainingWords[299].index + remainingWords[299][0].length
+        const searchWindow = remainingText.slice(minEnd, maxEnd)
+        const sentenceEndPattern = /[.!?…](?:["”»])?(?=\s|$)/g
+        let cutIndex = -1
+        let match
+
+        while ((match = sentenceEndPattern.exec(searchWindow)) !== null) {
+          cutIndex = minEnd + match.index + match[0].length
+        }
+
+        if (cutIndex === -1) {
+          const paragraphBreakIndex = searchWindow.lastIndexOf('\n\n')
+          if (paragraphBreakIndex !== -1) {
+            cutIndex = minEnd + paragraphBreakIndex
+          }
+        }
+
+        if (cutIndex === -1) {
+          cutIndex = maxEnd
+        }
+        parte2CutIndex = cutIndex
+      }
+
+      const parte2Excerpt = remainingText.slice(0, parte2CutIndex).trim()
+      parte2 = `${parte2Excerpt}\n\n${parte2Ending}`.trim()
+    }
+
+    return { caption, parte2 }
+  }
+
+  function buildTitleCaption(outputText) {
+    return splitTitleStory(outputText).caption
   }
 
   function safeCellText(text, onTruncate) {
@@ -578,12 +635,16 @@ export default function App() {
     }
 
     const data = activeTab === 'titles'
-      ? completedItems.map((item) => ({
-          TITLE: safeCellText(getStoryTitle(item.output, item.name), onTruncate),
-          CAPTION: safeCellText(buildTitleCaption(item.output), onTruncate),
-          'FULL STORY': safeCellText(item.output.trim(), onTruncate),
-          'PROMT IMAGE': safeCellText(item.imagePrompt?.trim() || '', onTruncate),
-        }))
+      ? completedItems.map((item) => {
+          const { caption, parte2 } = splitTitleStory(item.output)
+          return {
+            TITLE: safeCellText(getStoryTitle(item.output, item.name), onTruncate),
+            CAPTION: safeCellText(caption, onTruncate),
+            'PARTE 2': safeCellText(parte2, onTruncate),
+            'FULL STORY': safeCellText(item.output.trim(), onTruncate),
+            'PROMT IMAGE': safeCellText(item.imagePrompt?.trim() || '', onTruncate),
+          }
+        })
       : completedItems.map((item) => ({
           title: safeCellText(item.name, onTruncate),
           caption: safeCellText(item.output.trim(), onTruncate),
