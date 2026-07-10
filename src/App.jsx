@@ -27,7 +27,8 @@ Yêu cầu về định dạng và cấu trúc câu truyện (CỰC KỲ QUAN TR
    - Lời thoại trực tiếp bắt đầu bằng dấu gạch ngang dài (—) và đặt ở một dòng riêng biệt.
 5. Tuyệt đối KHÔNG sử dụng các emoji rải rác trong tiêu đề và nội dung câu chuyện.
 6. Bắt buộc kết thúc câu chuyện bằng dòng kêu gọi hành động sau (đây là nơi DUY NHẤT chứa emoji):
-   Comenta “YES” si quieres ver la parte 2. 👇😢
+   Comenta “YES” si quieres ver la parte 2. 👇😢 
+   #peliculas #viralvideos #spain #cdrama #edit #espana #kdramascenes
 7. Độ dài của câu chuyện (không tính tiêu đề và dòng kêu gọi hành động) phải nằm trong khoảng từ 500 đến 600 từ.
 8. Tuyệt đối chỉ trả về nội dung câu chuyện, không thêm bất kỳ lời mở đầu, giải thích hay ghi chú nào ngoài lề. Không viết mã code hay dùng khối code.
 
@@ -323,7 +324,16 @@ function normalizeGeneratedStoryOutput(outputText, itemType = 'srt') {
     if (removeEmoji(line).trim().toUpperCase() === normalizedTitleForCompare) continue
 
     const isCta = /^Comenta\b/i.test(line)
-    if (!isCta) line = removeEmoji(line).trim()
+    if (line.includes('peliculas #viralvideos')) {
+      continue
+    }
+    if (!isCta) {
+      line = removeEmoji(line).trim()
+    } else if (itemType === 'srt') {
+      if (!line.includes('#peliculas') && !line.includes('peliculas #viralvideos')) {
+        line = `${line}\n#peliculas #viralvideos #spain #cdrama #edit #espana #kdramascenes`
+      }
+    }
     if (!line) {
       if (bodyLines.length && !previousWasBlank) {
         bodyLines.push('')
@@ -338,6 +348,28 @@ function normalizeGeneratedStoryOutput(outputText, itemType = 'srt') {
       bodyLines.push(line)
     }
     previousWasBlank = false
+  }
+
+  if (itemType === 'srt') {
+    let hasCta = false
+    for (let j = 0; j < bodyLines.length; j++) {
+      if (bodyLines[j].includes('#peliculas') || bodyLines[j].includes('peliculas #viralvideos')) {
+        hasCta = true
+        break
+      }
+    }
+    if (!hasCta && bodyLines.length > 0) {
+      let lastLineIndex = -1
+      for (let j = bodyLines.length - 1; j >= 0; j--) {
+        if (bodyLines[j].trim()) {
+          lastLineIndex = j
+          break
+        }
+      }
+      if (lastLineIndex !== -1) {
+        bodyLines[lastLineIndex] = `${bodyLines[lastLineIndex]}\n#peliculas #viralvideos #spain #cdrama #edit #espana #kdramascenes`
+      }
+    }
   }
 
   return (isTitleMode ? [title, '', ...bodyLines] : [title, 'PARTE 1', '', ...bodyLines])
