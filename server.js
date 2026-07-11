@@ -380,9 +380,13 @@ function handleMcpMessage(msg) {
       if (match) {
         text = match[1].trim();
       }
-      text = pending.itemType === 'imagePrompt'
-        ? normalizeImagePromptOutput(text)
-        : normalizeGeneratedStoryOutput(text, pending.itemType);
+      if (pending.itemType === 'imagePrompt') {
+        text = normalizeImagePromptOutput(text);
+      } else if (pending.itemType === 'translate') {
+        text = text.trim();
+      } else {
+        text = normalizeGeneratedStoryOutput(text, pending.itemType);
+      }
       
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ output: text }));

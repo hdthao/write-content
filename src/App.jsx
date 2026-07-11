@@ -2,6 +2,26 @@ import React, { useState, useEffect, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import { SrtList, SrtEditor } from './components/SrtManager'
 import { TitleList, TitleEditor } from './components/TitleManager'
+import { TranslationList, TranslationEditor } from './components/TranslationManager'
+
+const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  ? 'http://localhost:3000'
+  : 'https://write-content.onrender.com';
+
+function buildTranslationPrompt(content, targetLanguage) {
+  return `Bạn là một dịch giả chuyên nghiệp. Hãy dịch nội dung sau đây sang ${targetLanguage} theo các yêu cầu sau:
+
+Nội dung gốc cần dịch:
+"""
+${content}
+"""
+
+Yêu cầu dịch thuật (CỰC KỲ QUAN TRỌNG - PHẢI TUÂN THỦ CHÍNH XÁC):
+1. Bản dịch KHÔNG ĐƯỢC thay đổi ý nghĩa của nội dung gốc. Giữ nguyên ngữ cảnh, sắc thái biểu cảm và các chi tiết cốt lõi.
+2. Chỉ dịch nội dung phù hợp với ngôn ngữ của từng loại (ví dụ: nếu có các ký tự đặc biệt, định dạng cụ thể, giữ nguyên cấu trúc dòng, lời thoại nếu có).
+3. Đảm bảo ngôn từ tự nhiên, lưu loát, chuẩn ngữ pháp của ${targetLanguage}.
+4. Tuyệt đối chỉ trả về nội dung đã được dịch sang ${targetLanguage}, không thêm bất kỳ lời giải thích, mở đầu, ghi chú hay ký tự ngoài lề nào. Không viết mã code hay dùng khối code.`
+}
 
 function buildPrompt(captionText) {
   return `Đây là kịch bản của một video drama ngắn 10 giây. Hãy viết một câu chuyện kịch tính, lôi cuốn người đọc dựa trên kịch bản này bằng tiếng Tây Ban Nha theo các yêu cầu sau:
@@ -27,7 +47,7 @@ Yêu cầu về định dạng và cấu trúc câu truyện (CỰC KỲ QUAN TR
    - Lời thoại trực tiếp bắt đầu bằng dấu gạch ngang dài (—) và đặt ở một dòng riêng biệt.
 5. Tuyệt đối KHÔNG sử dụng các emoji rải rác trong tiêu đề và nội dung câu chuyện.
 6. Bắt buộc kết thúc câu chuyện bằng dòng kêu gọi hành động sau (đây là nơi DUY NHẤT chứa emoji):
-   Comenta “YES” si quieres ver la parte 2. 👇😢 
+   Comenta “Si” si quieres ver la parte 2. 👇😢 
    #peliculas #viralvideos #spain #cdrama #edit #espana #kdramascenes
 7. Độ dài của câu chuyện (không tính tiêu đề và dòng kêu gọi hành động) phải nằm trong khoảng từ 500 đến 600 từ.
 8. Tuyệt đối chỉ trả về nội dung câu chuyện, không thêm bất kỳ lời mở đầu, giải thích hay ghi chú nào ngoài lề. Không viết mã code hay dùng khối code.
@@ -379,11 +399,13 @@ function normalizeGeneratedStoryOutput(outputText, itemType = 'srt') {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('srt') // 'srt' | 'titles'
+  const [activeTab, setActiveTab] = useState('srt') // 'srt' | 'titles' | 'translate'
   const [files, setFiles] = useState([]) // Array of: { id, name, captionText, status, errorMsg, output: '' }
   const [selectedFileId, setSelectedFileId] = useState(null)
   const [titles, setTitles] = useState([]) // Array of: { id, name, titleText, status, errorMsg, output: '', imagePrompt: '' }
   const [selectedTitleId, setSelectedTitleId] = useState(null)
+  const [translations, setTranslations] = useState([]) // Array of: { id, name, contentText, targetLanguage, status, errorMsg, output: '' }
+  const [selectedTranslationId, setSelectedTranslationId] = useState(null)
   const [status, setStatus] = useState('idle') // idle | loading | done
   const [errorMsg, setErrorMsg] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
@@ -427,7 +449,7 @@ export default function App() {
   async function checkBackendStatus() {
     setCheckingStatus(true)
     try {
-      const res = await fetch('https://write-content.onrender.com/api/status', {
+      const res = await fetch(`${API_BASE_URL}/api/status`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -494,7 +516,9 @@ export default function App() {
 
   const selectedItem = activeTab === 'srt'
     ? files.find((f) => f.id === selectedFileId)
-    : titles.find((t) => t.id === selectedTitleId)
+    : activeTab === 'titles'
+      ? titles.find((t) => t.id === selectedTitleId)
+      : translations.find((t) => t.id === selectedTranslationId)
 
   // Handlers for SRT and Title loading/editing are handled inside the respective components.
 
@@ -507,7 +531,7 @@ export default function App() {
         setCopiedStoryId(null)
       }, 2000)
     }
-    showTemporarySuccess('Đã sao chép nội dung câu chuyện!')
+    showTemporarySuccess(activeTab === 'translate' ? 'Đã sao chép nội dung bản dịch!' : 'Đã sao chép nội dung câu chuyện!')
   }
 
   function handleCopyImagePrompt(text, resultId) {
@@ -521,16 +545,19 @@ export default function App() {
   }
 
   function handleCopyAll() {
-    const list = activeTab === 'srt' ? files : titles
+    const list = activeTab === 'srt' ? files : (activeTab === 'titles' ? titles : translations)
     const allOutputs = list
       .filter((item) => item.output && item.output.trim())
-      .map((item) => `=== ${item.name} ===\n\n${item.output.trim()}`)
+      .map((item) => {
+        const langSuffix = item.targetLanguage ? ` [${item.targetLanguage}]` : ''
+        return `=== ${item.name}${langSuffix} ===\n\n${item.output.trim()}`
+      })
       .join('\n\n\n')
 
     if (allOutputs) {
       navigator.clipboard.writeText(allOutputs)
       setCopiedAll(true)
-      showTemporarySuccess('Đã sao chép tất cả các câu chuyện đã hoàn thành!')
+      showTemporarySuccess(activeTab === 'translate' ? 'Đã sao chép tất cả các bản dịch đã hoàn thành!' : 'Đã sao chép tất cả các câu chuyện đã hoàn thành!')
       setTimeout(() => {
         setCopiedAll(false)
       }, 2000)
@@ -653,11 +680,11 @@ export default function App() {
   }
 
   function handleExportXlsx() {
-    const list = activeTab === 'srt' ? files : titles
+    const list = activeTab === 'srt' ? files : (activeTab === 'titles' ? titles : translations)
     const completedItems = list.filter((item) => item.output && item.output.trim())
 
     if (completedItems.length === 0) {
-      setErrorMsg('Không có nội dung câu chuyện nào đã hoàn thành để xuất file.')
+      setErrorMsg(activeTab === 'translate' ? 'Không có nội dung dịch thuật nào đã hoàn thành để xuất file.' : 'Không có nội dung câu chuyện nào đã hoàn thành để xuất file.')
       return
     }
 
@@ -677,17 +704,23 @@ export default function App() {
             'PROMT IMAGE': safeCellText(item.imagePrompt?.trim() || '', onTruncate),
           }
         })
-      : completedItems.map((item) => ({
-          title: safeCellText(item.name, onTruncate),
-          caption: safeCellText(item.output.trim(), onTruncate),
-        }))
+      : activeTab === 'translate'
+        ? completedItems.map((item) => ({
+            'ORIGINAL CONTENT': safeCellText(item.contentText, onTruncate),
+            'LANGUAGE': safeCellText(item.targetLanguage, onTruncate),
+            'TRANSLATED CONTENT': safeCellText(item.output.trim(), onTruncate),
+          }))
+        : completedItems.map((item) => ({
+            title: safeCellText(item.name, onTruncate),
+            caption: safeCellText(item.output.trim(), onTruncate),
+          }))
 
     try {
       const worksheet = XLSX.utils.json_to_sheet(data)
       const workbook = XLSX.utils.book_new()
-      XLSX.utils.book_append_sheet(workbook, worksheet, activeTab === 'srt' ? 'SRT Captions' : 'Title Captions')
+      XLSX.utils.book_append_sheet(workbook, worksheet, activeTab === 'srt' ? 'SRT Captions' : (activeTab === 'titles' ? 'Title Captions' : 'Translations'))
 
-      const fileName = activeTab === 'srt' ? 'srt_captions.xlsx' : 'title_captions.xlsx'
+      const fileName = activeTab === 'srt' ? 'srt_captions.xlsx' : (activeTab === 'titles' ? 'title_captions.xlsx' : 'translations.xlsx')
       XLSX.writeFile(workbook, fileName)
 
       if (truncatedCount > 0) {
@@ -706,7 +739,7 @@ export default function App() {
   }
 
   async function generateImagePromptForStory(storyText, signal) {
-    const response = await fetch('https://write-content.onrender.com/api/generate', {
+    const response = await fetch(`${API_BASE_URL}/api/generate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -737,7 +770,7 @@ export default function App() {
     return normalizeImagePromptOutput(json.output || '')
   }
 
-  async function generateRewriteForItem(itemType, itemId, text, signal) {
+  async function generateRewriteForItem(itemType, itemId, text, signal, targetLanguage = 'Spanish') {
     const setItemStatus = (id, stat, valText = '', err = '', imagePromptText = '') => {
       const updater = (prev) =>
         prev.map((item) =>
@@ -749,16 +782,20 @@ export default function App() {
         )
       if (itemType === 'srt') {
         setFiles(updater)
-      } else {
+      } else if (itemType === 'titles') {
         setTitles(updater)
+      } else {
+        setTranslations(updater)
       }
     }
 
     setItemStatus(itemId, 'loading')
 
     try {
-      const prompt = itemType === 'srt' ? buildPrompt(text) : buildTitlePrompt(text)
-      const response = await fetch('https://write-content.onrender.com/api/generate', {
+      const prompt = itemType === 'srt'
+        ? buildPrompt(text)
+        : (itemType === 'titles' ? buildTitlePrompt(text) : buildTranslationPrompt(text, targetLanguage))
+      const response = await fetch(`${API_BASE_URL}/api/generate`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -786,7 +823,7 @@ export default function App() {
       }
 
       const json = await response.json()
-      const textResult = normalizeGeneratedStoryOutput(json.output || '', itemType)
+      const textResult = itemType === 'translate' ? (json.output || '').trim() : normalizeGeneratedStoryOutput(json.output || '', itemType)
       let imagePromptResult = ''
       if (itemType === 'titles') {
         try {
@@ -812,16 +849,18 @@ export default function App() {
     setErrorMsg('')
     setSuccessMsg('')
 
-    const listToProcess = activeTab === 'srt' ? files : titles
+    const listToProcess = activeTab === 'srt' ? files : (activeTab === 'titles' ? titles : translations)
     if (listToProcess.length === 0) {
-      setErrorMsg(activeTab === 'srt' ? 'Hãy upload ít nhất một tệp phụ đề .srt.' : 'Hãy nhập hoặc tải lên ít nhất một tiêu đề.')
+      setErrorMsg(activeTab === 'srt'
+        ? 'Hãy upload ít nhất một tệp phụ đề .srt.'
+        : (activeTab === 'titles' ? 'Hãy nhập hoặc tải lên ít nhất một tiêu đề.' : 'Hãy nhập hoặc tải lên ít nhất một nội dung cần dịch.'))
       return
     }
 
     // Skip processing if all items are already completed
     const unprocessedItems = listToProcess.filter((item) => item.status !== 'done')
     if (unprocessedItems.length === 0) {
-      showTemporarySuccess('Tất cả các mục trong hàng đợi đã được viết hoàn thành!')
+      showTemporarySuccess(activeTab === 'translate' ? 'Tất cả các bản dịch trong hàng đợi đã hoàn thành!' : 'Tất cả các mục trong hàng đợi đã được viết hoàn thành!')
       return
     }
 
@@ -845,8 +884,10 @@ export default function App() {
 
     if (activeTab === 'srt') {
       setFiles(initializedItems)
-    } else {
+    } else if (activeTab === 'titles') {
       setTitles(initializedItems)
+    } else {
+      setTranslations(initializedItems)
     }
 
     // Process unprocessed sequentially
@@ -855,8 +896,8 @@ export default function App() {
       if (item.status === 'done') continue
 
       try {
-        const textInput = activeTab === 'srt' ? item.captionText : item.titleText
-        await generateRewriteForItem(activeTab, item.id, textInput, abortControllerRef.current.signal)
+        const textInput = activeTab === 'srt' ? item.captionText : (activeTab === 'titles' ? item.titleText : item.contentText)
+        await generateRewriteForItem(activeTab, item.id, textInput, abortControllerRef.current.signal, item.targetLanguage)
       } catch (err) {
         if (err.name === 'AbortError' || stopRequestedRef.current) break
         console.error(err)
@@ -871,7 +912,7 @@ export default function App() {
     }
 
     setStatus('done')
-    showTemporarySuccess('Hoàn thành quá trình viết truyện tự động bằng Chrome Cookies!')
+    showTemporarySuccess(activeTab === 'translate' ? 'Hoàn thành quá trình dịch thuật tự động!' : 'Hoàn thành quá trình viết truyện tự động bằng Chrome Cookies!')
   }
 
   async function handleGenerateSingleItem(item) {
@@ -884,9 +925,9 @@ export default function App() {
     abortControllerRef.current = new AbortController()
 
     try {
-      const textInput = activeTab === 'srt' ? item.captionText : item.titleText
-      await generateRewriteForItem(activeTab, item.id, textInput, abortControllerRef.current.signal)
-      showTemporarySuccess(`Đã viết câu chuyện thành công cho "${item.name}"!`)
+      const textInput = activeTab === 'srt' ? item.captionText : (activeTab === 'titles' ? item.titleText : item.contentText)
+      await generateRewriteForItem(activeTab, item.id, textInput, abortControllerRef.current.signal, item.targetLanguage)
+      showTemporarySuccess(activeTab === 'translate' ? `Đã dịch thành công cho "${item.name}"!` : `Đã viết câu chuyện thành công cho "${item.name}"!`)
     } catch (err) {
       if (err.name !== 'AbortError') {
         console.error(err)
@@ -910,14 +951,16 @@ export default function App() {
 
     if (activeTab === 'srt') {
       setFiles(updater)
-    } else {
+    } else if (activeTab === 'titles') {
       setTitles(updater)
+    } else {
+      setTranslations(updater)
     }
 
     setStatus('idle')
 
     try {
-      await fetch('https://write-content.onrender.com/api/cancel', {
+      await fetch(`${API_BASE_URL}/api/cancel`, {
         method: 'POST',
       })
     } catch (err) {
@@ -972,6 +1015,15 @@ export default function App() {
                     >
                       📝 Tiêu đề (Nhiều dòng)
                     </button>
+                    <button
+                      type="button"
+                      className={`tab-btn ${activeTab === 'translate' ? 'active' : ''}`}
+                      onClick={() => {
+                        setActiveTab('translate')
+                      }}
+                    >
+                      🌐 Dịch thuật (Translate)
+                    </button>
                   </div>
                 </div>
 
@@ -985,12 +1037,22 @@ export default function App() {
                     setErrorMsg={setErrorMsg}
                     showTemporarySuccess={showTemporarySuccess}
                   />
-                ) : (
+                ) : activeTab === 'titles' ? (
                   <TitleList
                     titles={titles}
                     setTitles={setTitles}
                     selectedTitleId={selectedTitleId}
                     setSelectedTitleId={setSelectedTitleId}
+                    status={status}
+                    setErrorMsg={setErrorMsg}
+                    showTemporarySuccess={showTemporarySuccess}
+                  />
+                ) : (
+                  <TranslationList
+                    translations={translations}
+                    setTranslations={setTranslations}
+                    selectedTranslationId={selectedTranslationId}
+                    setSelectedTranslationId={setSelectedTranslationId}
                     status={status}
                     setErrorMsg={setErrorMsg}
                     showTemporarySuccess={showTemporarySuccess}
@@ -1117,10 +1179,16 @@ export default function App() {
                     setFiles={setFiles}
                     status={status}
                   />
-                ) : (
+                ) : activeTab === 'titles' ? (
                   <TitleEditor
                     selectedTitle={titles.find((t) => t.id === selectedTitleId)}
                     setTitles={setTitles}
+                    status={status}
+                  />
+                ) : (
+                  <TranslationEditor
+                    selectedTranslation={translations.find((t) => t.id === selectedTranslationId)}
+                    setTranslations={setTranslations}
                     status={status}
                   />
                 )}
@@ -1129,12 +1197,14 @@ export default function App() {
                 {successMsg && <p className="success-text" style={{ marginTop: '0.5rem', color: 'green', fontWeight: 'bold' }}>{successMsg}</p>}
 
                 <div style={{ display: 'flex', gap: '0.5rem', marginTop: 'auto' }}>
-                  <button type="submit" className="generate-btn" style={{ margin: 0, flex: 1 }} disabled={status === 'loading' || (activeTab === 'srt' ? files : titles).length === 0}>
+                  <button type="submit" className="generate-btn" style={{ margin: 0, flex: 1 }} disabled={status === 'loading' || (activeTab === 'srt' ? files : (activeTab === 'titles' ? titles : translations)).length === 0}>
                     {status === 'loading'
-                      ? '⏳ Đang viết truyện bằng Chrome Cookies (Chạy ngầm)...'
+                      ? (activeTab === 'translate' ? '⏳ Đang dịch bằng Chrome Cookies (Chạy ngầm)...' : '⏳ Đang viết truyện bằng Chrome Cookies (Chạy ngầm)...')
                       : activeTab === 'srt'
                         ? '🚀 Viết tự động bằng Chrome Cookies cho tất cả các file SRT'
-                        : '🚀 Viết tự động bằng Chrome Cookies cho tất cả các Tiêu đề'
+                        : activeTab === 'titles'
+                          ? '🚀 Viết tự động bằng Chrome Cookies cho tất cả các Tiêu đề'
+                          : '🚀 Dịch tự động bằng Chrome Cookies cho tất cả nội dung'
                     }
                   </button>
                   {status === 'loading' && (
@@ -1171,7 +1241,7 @@ export default function App() {
               {selectedItem.status === 'loading' && (
                 <div style={{ textAlign: 'center', padding: '3rem 1rem', color: '#888' }}>
                   <p className="placeholder" style={{ fontSize: '1.1rem' }}>
-                    ⏳ Đang viết truyện tự động bằng Chrome Cookies...
+                    {activeTab === 'translate' ? '⏳ Đang dịch tự động...' : '⏳ Đang viết truyện tự động bằng Chrome Cookies...'}
                   </p>
                 </div>
               )}
@@ -1205,7 +1275,7 @@ export default function App() {
                         onClick={() => handleGenerateSingleItem(selectedItem)}
                         disabled={status === 'loading'}
                       >
-                        🔄 Viết lại
+                        {activeTab === 'translate' ? '🔄 Dịch lại' : '🔄 Viết lại'}
                       </button>
                       <button
                         type="button"
@@ -1287,7 +1357,7 @@ export default function App() {
               {selectedItem.status === 'idle' && !selectedItem.output && (
                 <div style={{ textAlign: 'center', padding: '3rem 1rem', color: '#888' }}>
                   <p className="placeholder" style={{ fontSize: '1.1rem' }}>
-                    ⏳ Chờ viết truyện tự động...
+                    {activeTab === 'translate' ? '⏳ Chờ dịch tự động...' : '⏳ Chờ viết truyện tự động...'}
                   </p>
                 </div>
               )}
@@ -1297,13 +1367,15 @@ export default function App() {
               <p className="placeholder" style={{ fontSize: '1.1rem', marginBottom: '1.5rem' }}>
                 {activeTab === 'srt'
                   ? 'Hãy tải lên và chọn một file phụ đề để bắt đầu.'
-                  : 'Hãy nhập hoặc tải lên và chọn một tiêu đề để bắt đầu.'
+                  : activeTab === 'titles'
+                    ? 'Hãy nhập hoặc tải lên và chọn một tiêu đề để bắt đầu.'
+                    : 'Hãy nhập hoặc tải lên và chọn một nội dung dịch để bắt đầu.'
                 }
               </p>
             </div>
           )}
 
-          {((activeTab === 'srt' ? files : titles).some((item) => item.output && item.output.trim())) && (
+          {((activeTab === 'srt' ? files : (activeTab === 'titles' ? titles : translations)).some((item) => item.output && item.output.trim())) && (
             <div style={{ marginTop: '2.5rem', borderTop: '2px solid #ddd', paddingTop: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.8rem', textAlign: 'center' }}>
               <button
                 type="button"
@@ -1314,9 +1386,11 @@ export default function App() {
               >
                 {copiedAll
                   ? '✓ Đã sao chép tất cả'
-                  : `Sao chép tất cả truyện đã viết của ${activeTab === 'srt' ? 'các file SRT' : 'các Tiêu đề'} (${
-                      (activeTab === 'srt' ? files : titles).filter((item) => item.output && item.output.trim()).length
-                    } bài)`
+                  : activeTab === 'translate'
+                    ? `Sao chép tất cả bản dịch đã hoàn thành (${translations.filter((item) => item.output && item.output.trim()).length} bài)`
+                    : `Sao chép tất cả truyện đã viết của ${activeTab === 'srt' ? 'các file SRT' : 'các Tiêu đề'} (${
+                        (activeTab === 'srt' ? files : titles).filter((item) => item.output && item.output.trim()).length
+                      } bài)`
                 }
               </button>
 
@@ -1328,7 +1402,7 @@ export default function App() {
                 disabled={status === 'loading'}
               >
                 📊 Xuất tệp Excel (.xlsx) ({
-                  (activeTab === 'srt' ? files : titles).filter((item) => item.output && item.output.trim()).length
+                  (activeTab === 'srt' ? files : (activeTab === 'titles' ? titles : translations)).filter((item) => item.output && item.output.trim()).length
                 } bài)
               </button>
             </div>
