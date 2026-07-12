@@ -12,6 +12,12 @@ RUN apt-get update && apt-get install -y \
 # Copy uv từ image chính thức của Astral vào /bin để chạy toàn cục
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
+# Cài đặt trước gói gemini-webapi-mcp để tránh cài đặt động lúc runtime
+RUN uv pip install --system --break-system-packages "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git"
+
+# Cấu hình biến môi trường để server.js biết lệnh chạy trực tiếp
+ENV MCP_COMMAND="gemini-webapi-mcp"
+
 # Thiết lập thư mục làm việc trong container
 WORKDIR /app
 

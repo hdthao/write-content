@@ -261,7 +261,8 @@ function startMcpServer() {
   }
 
   // On Windows, running uv run with a single command string prevents argument escaping issues in shell: true.
-  child = spawn('uv run --with "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git" gemini-webapi-mcp', [], { 
+  const mcpCommand = process.env.MCP_COMMAND || 'uv run --with "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git" gemini-webapi-mcp';
+  child = spawn(mcpCommand, [], { 
     shell: true,
     env,
     stdio: ['pipe', 'pipe', 'pipe'] 
