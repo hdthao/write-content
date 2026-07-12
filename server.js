@@ -13,6 +13,16 @@ let msgId = 1;
 let initializeId = null;
 const pendingRequests = new Map();
 
+// --- Restart backoff control (tránh vòng lặp restart vô hạn ăn RAM/CPU) ---
+const MAX_RESTART_ATTEMPTS = 5;
+const BASE_RESTART_DELAY_MS = 5000;
+const MAX_RESTART_DELAY_MS = 60000;
+let restartAttempts = 0;
+let restartTimer = null;
+
+// --- Hàng đợi request khi đang restart, tránh race condition khi nhiều request tới cùng lúc ---
+const waitingForInit = [];
+
 function removeDebugAndCodeLines(text) {
   const lines = text
     .replace(/^\uFEFF/, '')
@@ -244,10 +254,27 @@ function normalizeImagePromptOutput(text) {
   return lower.charAt(0).toLocaleUpperCase('en') + lower.slice(1);
 }
 
-// Helper to spawn the gemini-webapi-mcp process
+// ---------------------------------------------------------------------
+// Helper để spawn tiến trình gemini-webapi-mcp
+//
+// TỐI ƯU QUAN TRỌNG: mặc định KHÔNG dùng `uv run --with "pkg @ git+..."`
+// nữa, vì cú pháp đó khiến uv resolve + tải + build lại package từ GitHub
+// MỖI LẦN subprocess khởi động (kể cả các lần tự restart) -> rất tốn
+// RAM/CPU/thời gian và là nguyên nhân khả dĩ gây lỗi "stream bị ngắt".
+//
+// Cách làm mới:
+//  1) Cài đặt package MỘT LẦN lúc build (không phải lúc runtime), ví dụ
+//     thêm vào Build Command của Render:
+//       uv tool install "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git"
+//  2) Runtime chỉ cần gọi thẳng binary đã cài, gần như khởi động tức thì:
+//       gemini-webapi-mcp
+//
+// Nếu bạn chưa cài trước lúc build, vẫn có thể override qua biến môi
+// trường MCP_COMMAND để dùng lại cú pháp `uv run --with ...` cũ.
+// ---------------------------------------------------------------------
 function startMcpServer() {
   console.log('[BACKEND] Đang khởi chạy gemini-webapi-mcp...');
-  
+
   const env = { ...process.env };
   const userHome = process.env.USERPROFILE || process.env.HOME || '';
   if (userHome) {
@@ -260,18 +287,18 @@ function startMcpServer() {
     }
   }
 
-  // On Windows, running uv run with a single command string prevents argument escaping issues in shell: true.
   const mcpCommand = process.env.MCP_COMMAND || 'uvx --from git+https://github.com/AndyShaman/gemini-webapi-mcp.git gemini-webapi-mcp';
-  child = spawn(mcpCommand, [], { 
+  child = spawn(mcpCommand, [], {
     shell: true,
     env,
-    stdio: ['pipe', 'pipe', 'pipe'] 
+    stdio: ['pipe', 'pipe', 'pipe']
   });
 
   child.on('error', (err) => {
     console.error('[BACKEND] Lỗi khi chạy gemini-webapi-mcp:', err);
     mcpServerAvailable = false;
     spawnErrorMsg = err.message;
+    failAllWaiting('Không thể khởi chạy gemini-webapi-mcp: ' + err.message);
   });
 
   // Handle stdout to read JSON-RPC messages from MCP Server
@@ -309,18 +336,41 @@ function startMcpServer() {
     if (isRestarting) {
       console.log('[BACKEND] Đang tiến hành khởi động lại MCP server với cookie mới...');
       isRestarting = false;
+      restartAttempts = 0; // đổi cookie là khởi động lại có chủ đích, reset bộ đếm backoff
       startMcpServer();
       return;
     }
 
-    // Attempt to restart after 5 seconds if it closed unexpectedly
+    // Tự restart khi bị đóng ngoài ý muốn, nhưng có giới hạn số lần thử +
+    // backoff tăng dần để tránh vòng lặp restart vô hạn ăn RAM/CPU
+    // (đặc biệt quan trọng trên free tier RAM thấp).
     if (mcpServerAvailable) {
-      setTimeout(startMcpServer, 5000);
+      scheduleRestart();
     }
   });
 
   // Send initialize request to start the protocol handshake
   sendInitialize();
+}
+
+function scheduleRestart() {
+  if (restartTimer) return; // đã có 1 lần restart đang chờ, không xếp chồng
+
+  restartAttempts += 1;
+  if (restartAttempts > MAX_RESTART_ATTEMPTS) {
+    console.error(`[BACKEND] Đã thử khởi động lại ${MAX_RESTART_ATTEMPTS} lần liên tiếp thất bại. Dừng tự động restart.`);
+    mcpServerAvailable = false;
+    spawnErrorMsg = `Vượt quá số lần tự khởi động lại tối đa (${MAX_RESTART_ATTEMPTS}).`;
+    failAllWaiting(spawnErrorMsg);
+    return;
+  }
+
+  const delay = Math.min(BASE_RESTART_DELAY_MS * 2 ** (restartAttempts - 1), MAX_RESTART_DELAY_MS);
+  console.log(`[BACKEND] Sẽ thử khởi động lại lần ${restartAttempts}/${MAX_RESTART_ATTEMPTS} sau ${delay}ms...`);
+  restartTimer = setTimeout(() => {
+    restartTimer = null;
+    startMcpServer();
+  }, delay);
 }
 
 function sendInitialize() {
@@ -346,6 +396,20 @@ function writeToMcp(msg) {
   child.stdin.write(JSON.stringify(msg) + '\n');
 }
 
+// Trả lỗi cho tất cả các request đang chờ MCP server sẵn sàng (dùng khi
+// subprocess không thể phục hồi được nữa), tránh để client treo vô thời hạn.
+function failAllWaiting(errorMessage) {
+  while (waitingForInit.length) {
+    const { res } = waitingForInit.shift();
+    try {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: errorMessage }));
+    } catch (e) {
+      // response có thể đã đóng, bỏ qua
+    }
+  }
+}
+
 function handleMcpMessage(msg) {
   // 1. Handle initialize response
   if (msg.id === initializeId && msg.result) {
@@ -357,7 +421,14 @@ function handleMcpMessage(msg) {
     writeToMcp(initializedNotification);
     isInitialized = true;
     mcpServerAvailable = true;
+    restartAttempts = 0; // khởi tạo thành công -> reset bộ đếm backoff
     console.log('[BACKEND] gemini-webapi-mcp đã sẵn sàng!');
+
+    // Xử lý các request đã xếp hàng chờ trong lúc subprocess đang khởi động lại
+    while (waitingForInit.length) {
+      const { prompt, res, itemType } = waitingForInit.shift();
+      sendToolCall(prompt, res, itemType);
+    }
     return;
   }
 
@@ -373,7 +444,7 @@ function handleMcpMessage(msg) {
     } else {
       // Standard MCP tool response format: result.content[0].text
       let text = msg.result?.content?.[0]?.text || '';
-      
+
       // Clean up markdown code blocks if the model wrapped the response
       text = text.trim();
       const codeBlockRegex = /^```(?:[a-zA-Z0-9_?&=]+)?\n([\s\S]*?)\n```$/;
@@ -388,7 +459,7 @@ function handleMcpMessage(msg) {
       } else {
         text = normalizeGeneratedStoryOutput(text, pending.itemType);
       }
-      
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ output: text }));
     }
@@ -514,6 +585,7 @@ const server = http.createServer((req, res) => {
               child.kill();
             } else {
               isRestarting = false;
+              restartAttempts = 0;
               startMcpServer();
             }
 
@@ -577,6 +649,7 @@ const server = http.createServer((req, res) => {
               child.kill();
             } else {
               isRestarting = false;
+              restartAttempts = 0;
               startMcpServer();
             }
 
@@ -599,15 +672,33 @@ const server = http.createServer((req, res) => {
 
         if (!mcpServerAvailable) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ 
-            error: `Không chạy được gemini-webapi-mcp (${spawnErrorMsg}). Vui lòng đảm bảo bạn đã cài đặt uv và đã đăng nhập tài khoản Google trên Chrome để server có thể đọc cookies.` 
+          res.end(JSON.stringify({
+            error: `Không chạy được gemini-webapi-mcp (${spawnErrorMsg}). Vui lòng đảm bảo bạn đã cài đặt uv (hoặc đã cài sẵn gemini-webapi-mcp lúc build) và đã đăng nhập tài khoản Google để server có thể đọc cookies.`
           }));
           return;
         }
 
         if (!isInitialized) {
-          res.writeHead(503, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'gemini-webapi-mcp đang khởi tạo. Vui lòng thử lại sau vài giây.' }));
+          // Thay vì bắt client tự retry, xếp request vào hàng đợi và xử lý
+          // ngay khi subprocess khởi tạo xong (hoặc timeout sau 15s).
+          const entry = { prompt, res, itemType };
+          waitingForInit.push(entry);
+
+          const timeoutId = setTimeout(() => {
+            const idx = waitingForInit.indexOf(entry);
+            if (idx !== -1) {
+              waitingForInit.splice(idx, 1);
+              res.writeHead(503, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'gemini-webapi-mcp đang khởi tạo quá lâu. Vui lòng thử lại sau.' }));
+            }
+          }, 15000);
+
+          // Đảm bảo timeout được huỷ nếu request đã được xử lý trước đó
+          const originalEnd = res.end.bind(res);
+          res.end = (...args) => {
+            clearTimeout(timeoutId);
+            return originalEnd(...args);
+          };
           return;
         }
 
